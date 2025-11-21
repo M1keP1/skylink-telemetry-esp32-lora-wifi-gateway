@@ -34,10 +34,15 @@ struct RawHeader {
     checksum: u32,
     tag: u8,
 }
-
+//For index based iterator
 pub struct StoreIterator<'a> {
     store: &'a Store,
     keys_iter: std::collections::hash_map::Keys<'a, Key, usize>,
+}
+//For Sequential Buffer Iterator
+pub struct StoreIter<'a> {
+    buf: &'a [u8],
+    pos: usize,
 }
 
 unsafe fn serialize_header_unsafe(header: &RawHeader, buffer: &mut Vec<u8>) {
@@ -161,6 +166,22 @@ impl<'a> Iterator for StoreIterator<'a> {
         Some((key, value.unwrap()))
     }
 }
+
+impl<'a> Iterator for StoreIter<'a> {
+    type Item = BorrowedEntry<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos >= self.buf.len() {
+            return None;
+        }
+
+        let(entry, bytes_read) = deserialize_value(&self.buf[self.pos..])?;
+        self.pos += bytes_read;
+
+        Some(entry)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +268,23 @@ mod tests {
 
         let values: Vec<_> = store.values().collect();
         assert_eq!(values.len(), 2);
+    }
+
+    #[test]
+    fn test_buffer_iterator_preserves_order() {
+        let mut store = Store::new();
+
+        store.put(Key::String("first".into()), Value::Int(1));
+        store.put(Key::String("second".into()), Value::Int(2));
+        store.put(Key::String("third".into()), Value::Int(3));
+
+        let values: Vec<_> = store.buffer_iter().collect();
+
+        assert_eq!(values, vec![
+            BorrowedEntry::Int(1),
+            BorrowedEntry::Int(2),
+            BorrowedEntry::Int(3),
+        ]);
     }
 }
 

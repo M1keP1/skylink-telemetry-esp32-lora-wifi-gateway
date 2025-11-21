@@ -1,5 +1,6 @@
 pub(crate) use crate::{borrowed_to_owned, deserialize_value, serialize_value, BorrowedEntry, Key, OwnedEntry, StoreIterator, Value};
 use std::collections::HashMap;
+use crate::StoreIter;
 
 pub struct Store {
     index: HashMap<Key, usize>,
@@ -42,6 +43,13 @@ impl Store {
         StoreIterator {
             store: self,
             keys_iter: self.index.keys(),
+        }
+    }
+    
+    pub fn buffer_iter(&self) -> StoreIter{
+        StoreIter{
+            buf: &self.data,
+            pos: 0,
         }
     }
 
