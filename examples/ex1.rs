@@ -7,13 +7,13 @@ fn main() {
     store.put(Key::Int(5), Value::Int(6));
 
     // Getting the value for Key: 5
-    let key_to_get = BorrowedEntry::Int(5);
+    let key_to_get = Key::Int(5);
     match store.get(&key_to_get) {
         Some(value) => println!("Got value for key 5: {:?}", value),
         None => println!("Key 5 not found"),
     }
 
     // Trying to get a non-existent key 2
-    let missing_key = BorrowedEntry::Int(2);
+    let missing_key = Key::Int(2);
     println!("Getting Key: 2 -> {:?}", store.get(&missing_key));
 }
