@@ -1,6 +1,9 @@
 mod store;
 pub use store::Store;
 
+use std::ptr;
+use std::convert::TryInto;
+
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum Key {
     String(String),
@@ -25,51 +28,108 @@ pub enum OwnedEntry {
     Text(String),
 }
 
-fn serialize_value(value: &Value) -> Vec<u8> {
-    match value {
-        Value::String(s) => {
-            let mut bytes = vec![0x01];
-            let s_bytes = s.as_bytes();
-            bytes.extend_from_slice(&(s_bytes.len() as u64).to_le_bytes());
-            bytes.extend_from_slice(s_bytes);
-            bytes
-        }
-        Value::Int(i) => {
-            let mut bytes = vec![0x02];
-            bytes.extend_from_slice(&i.to_le_bytes());
-            bytes
-        }
+#[repr(C, packed)]
+struct RawHeader {
+    length: u64,
+    checksum: u32,
+    tag: u8,
+}
+
+unsafe fn serialize_header_unsafe(header: &RawHeader, buffer: &mut Vec<u8>) {
+    // SAFETY: repr(C, packed) guarantees layout, we allocate enough space and immediately write
+    let header_size = std::mem::size_of::<RawHeader>();
+    let offset = buffer.len();
+    buffer.reserve(header_size);
+    buffer.set_len(offset + header_size);
+    let dest_ptr = buffer.as_mut_ptr().add(offset);
+    let header_ptr = header as *const RawHeader;
+    ptr::copy_nonoverlapping(header_ptr as *const u8, dest_ptr, header_size);
+}
+
+unsafe fn deserialize_header_unsafe(bytes: &[u8]) -> Option<RawHeader> {
+    // SAFETY: read_unaligned is used because data may not be aligned
+    let header_size = std::mem::size_of::<RawHeader>();
+    if bytes.len() < header_size {
+        return None;
     }
+    let header_ptr = bytes.as_ptr() as *const RawHeader;
+    Some(ptr::read_unaligned(header_ptr))
+}
+
+fn calculate_crc32(data: &[u8]) -> u32 {
+    crc32fast::hash(data)
+}
+
+fn serialize_value(value: &Value) -> Vec<u8> {
+    let (tag, value_data) = match value {
+        Value::String(s) => {
+            let mut v = Vec::new();
+            let b = s.as_bytes();
+            v.extend_from_slice(&(b.len() as u64).to_le_bytes());
+            v.extend_from_slice(b);
+            (0x01u8, v)
+        }
+        Value::Int(i) => (0x02u8, i.to_le_bytes().to_vec()),
+    };
+
+    let checksum = calculate_crc32(&value_data);
+
+    let header = RawHeader {
+        length: value_data.len() as u64,
+        checksum,
+        tag,
+    };
+
+    let mut out = Vec::new();
+    unsafe { serialize_header_unsafe(&header, &mut out) };
+    out.extend_from_slice(&value_data);
+    out
 }
 
 fn deserialize_value(bytes: &[u8]) -> Option<(BorrowedEntry, usize)> {
-    if bytes.is_empty() {
+    let header_size = std::mem::size_of::<RawHeader>();
+    if bytes.len() < header_size {
         return None;
     }
-    match bytes[0] {
+
+    let header = unsafe { deserialize_header_unsafe(bytes)? };
+
+    let length = header.length as usize;
+    if bytes.len() < header_size + length {
+        return None;
+    }
+
+    let value_data = &bytes[header_size..header_size + length];
+
+    let actual = calculate_crc32(value_data);
+    if actual != header.checksum {
+        panic!("Checksum mismatch! Data corruption detected.");
+    }
+
+    match header.tag {
         0x01 => {
-            if bytes.len() < 9 {
+            if value_data.len() < 8 {
                 return None;
             }
-            let len = u64::from_le_bytes((&bytes[1..9]).try_into().unwrap()) as usize;
-            if bytes.len() < 9 + len {
+            let len = u64::from_le_bytes(value_data[0..8].try_into().unwrap()) as usize;
+            if value_data.len() < 8 + len {
                 return None;
             }
-            let s = std::str::from_utf8(&bytes[9..9 + len]).ok()?;
-            Some((BorrowedEntry::Text(s), 9 + len))
+            let s = std::str::from_utf8(&value_data[8..8 + len]).ok()?;
+            Some((BorrowedEntry::Text(s), header_size + length))
         }
         0x02 => {
-            if bytes.len() < 9 {
+            if value_data.len() < 8 {
                 return None;
             }
-            let i = i64::from_le_bytes((&bytes[1..9]).try_into().unwrap());
-            Some((BorrowedEntry::Int(i), 9))
+            let v = i64::from_le_bytes(value_data[0..8].try_into().unwrap());
+            Some((BorrowedEntry::Int(v), header_size + length))
         }
         _ => None,
     }
 }
 
-fn borrowed_to_owned(entry: &BorrowedEntry) -> OwnedEntry {
+pub fn borrowed_to_owned(entry: &BorrowedEntry) -> OwnedEntry {
     match entry {
         BorrowedEntry::Int(i) => OwnedEntry::Int(*i),
         BorrowedEntry::Text(s) => OwnedEntry::Text(s.to_string()),
@@ -88,51 +148,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_serialize_deserialize_value() {
-        let value = Value::Int(2025);
-        let serialized = serialize_value(&value);
-        if let Some((d_value, _)) = deserialize_value(&serialized) {
-            assert_eq!(d_value, BorrowedEntry::Int(2025));
-        } else {
-            panic!("Failed to deserialize value");
-        }
+    fn test_roundtrip_values() {
+        let v = Value::Int(2025);
+        let s = serialize_value(&v);
+        let (out, _) = deserialize_value(&s).unwrap();
+        assert_eq!(out, BorrowedEntry::Int(2025));
 
-        let value2 = Value::String("hello".to_string());
-        let serialized2 = serialize_value(&value2);
-        if let Some((d_value2, _)) = deserialize_value(&serialized2) {
-            assert_eq!(d_value2, BorrowedEntry::Text("hello"));
-        } else {
-            panic!("Failed to deserialize value");
-        }
+        let v2 = Value::String("hello".into());
+        let s2 = serialize_value(&v2);
+        let (out2, _) = deserialize_value(&s2).unwrap();
+        assert_eq!(out2, BorrowedEntry::Text("hello"));
     }
 
     #[test]
-    fn test_borrowed_to_owned_conversions() {
-        // Test Text conversion
-        let borrowed_text = BorrowedEntry::Text("hello");
-        let owned = borrowed_to_owned(&borrowed_text);
-        assert_eq!(owned, OwnedEntry::Text("hello".to_string()));
-
-        // Test Int conversion
-        let borrowed_int = BorrowedEntry::Int(42);
-        let owned_int = borrowed_to_owned(&borrowed_int);
-        assert_eq!(owned_int, OwnedEntry::Int(42));
+    #[should_panic(expected = "Checksum mismatch")]
+    fn test_checksum_catches_corruption() {
+        let v = Value::String("abcdef".into());
+        let mut s = serialize_value(&v);
+        let header_size = std::mem::size_of::<RawHeader>();
+        s[header_size] ^= 0xFF;
+        deserialize_value(&s);
     }
 
     #[test]
-    fn test_owned_to_value_conversions() {
-        let owned_text = OwnedEntry::Text("world".to_string());
-        let value = owned_to_value(&owned_text);
-        assert_eq!(value, Value::String("world".to_string()));
-
-        let owned_int = OwnedEntry::Int(100);
-        let value_int = owned_to_value(&owned_int);
-        assert_eq!(value_int, Value::Int(100));
+    fn test_borrowed_owned() {
+        let b = BorrowedEntry::Text("hi");
+        let o = borrowed_to_owned(&b);
+        assert_eq!(o, OwnedEntry::Text("hi".into()));
+        let b2 = BorrowedEntry::Int(7);
+        let o2 = borrowed_to_owned(&b2);
+        assert_eq!(o2, OwnedEntry::Int(7));
     }
 
+    #[test]
+    fn test_owned_to_value() {
+        let o = OwnedEntry::Text("x".into());
+        assert_eq!(owned_to_value(&o), Value::String("x".into()));
+        let o2 = OwnedEntry::Int(5);
+        assert_eq!(owned_to_value(&o2), Value::Int(5));
+    }
 }
 
-// Storage format (in data Vec<u8>):
-// [ value_type_tag: u8 (1 byte) ]
-// [ value_data_len (if string): u64 (8 bytes), else none ]
-// [ value_data (bytes) ]
+// Vec<u8> layout:
+// [ RawHeader(length u64 | checksum u32 | tag u8) ]
+// [ value_data ]
+//
+// value_data for String = [ u64 len ][ bytes ]
+// value_data for Int    = [ i64 bytes ]

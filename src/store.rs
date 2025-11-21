@@ -15,21 +15,19 @@ impl Store {
     }
 
     pub fn put(&mut self, key: Key, value: Value) {
-        let position = self.data.len();
+        let pos = self.data.len();
         let serialized = serialize_value(&value);
         self.data.extend_from_slice(&serialized);
-        self.index.insert(key, position);
+        self.index.insert(key, pos);
     }
 
-    pub fn get<'a>(&'a self, search_key: &Key) -> Option<BorrowedEntry<'a>> {
-        let position = self.index.get(search_key)?;
-
-        if *position >= self.data.len() {
+    pub fn get<'a>(&'a self, key: &Key) -> Option<BorrowedEntry<'a>> {
+        let pos = *self.index.get(key)?;
+        if pos >= self.data.len() {
             return None;
         }
-
-        let (value, _) = deserialize_value(&self.data[*position..])?;
-        Some(value)
+        let (entry, _) = deserialize_value(&self.data[pos..])?;
+        Some(entry)
     }
 }
 
@@ -38,59 +36,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_overwrites() {
+    fn test_multiple_entries() {
         let mut store = Store::new();
 
-        store.put(Key::String("key1".into()), Value::Int(100));
-        assert_eq!(store.get(&Key::String("key1".into())), Some(BorrowedEntry::Int(100)));
+        store.put(Key::String("k1".into()), Value::Int(1));
+        store.put(Key::Int(2), Value::String("v2".into()));
+        store.put(Key::String("k3".into()), Value::String("v3".into()));
 
-        // Overwrite with new value
-        store.put(Key::String("key1".into()), Value::Int(200));
-        assert_eq!(store.get(&Key::String("key1".into())), Some(BorrowedEntry::Int(200)));
+        assert_eq!(store.get(&Key::String("k1".into())), Some(BorrowedEntry::Int(1)));
+        assert_eq!(store.get(&Key::Int(2)), Some(BorrowedEntry::Text("v2")));
+        assert_eq!(store.get(&Key::String("k3".into())), Some(BorrowedEntry::Text("v3")));
+        assert_eq!(store.get(&Key::Int(999)), None);
     }
 
     #[test]
-    fn test_borrowed_entry_returns() {
+    fn test_overwrite_behavior() {
         let mut store = Store::new();
+        store.put(Key::Int(1), Value::Int(10));
+        assert_eq!(store.get(&Key::Int(1)), Some(BorrowedEntry::Int(10)));
+        store.put(Key::Int(1), Value::Int(20));
+        assert_eq!(store.get(&Key::Int(1)), Some(BorrowedEntry::Int(20)));
+    }
 
-        store.put(Key::String("text_key".into()), Value::String("borrowed_text".into()));
-        store.put(Key::Int(42), Value::Int(12345));
-
-        // Verify that get returns BorrowedEntry
-        if let Some(borrowed) = store.get(&Key::String("text_key".into())) {
-            match borrowed {
-                BorrowedEntry::Text(s) => assert_eq!(s, "borrowed_text"),
-                _ => panic!("Expected Text variant"),
-            }
+    #[test]
+    fn test_borrowed_lifetime() {
+        let mut store = Store::new();
+        store.put(Key::String("t".into()), Value::String("abc".into()));
+        let b = store.get(&Key::String("t".into()));
+        if let Some(BorrowedEntry::Text(s)) = b {
+            assert_eq!(s, "abc");
+            assert_eq!(s.len(), 3);
         } else {
-            panic!("Expected to find key");
-        }
-
-        if let Some(borrowed) = store.get(&Key::Int(42)) {
-            match borrowed {
-                BorrowedEntry::Int(i) => assert_eq!(i, 12345),
-                _ => panic!("Expected Int variant"),
-            }
-        } else {
-            panic!("Expected to find key");
+            panic!("expected borrowed text");
         }
     }
 
     #[test]
-    fn test_multiple_conversions() {
+    fn test_borrowed_to_owned_roundtrip() {
         let mut store = Store::new();
-
-        store.put(Key::Int(1), Value::String("first".into()));
-        store.put(Key::Int(2), Value::String("second".into()));
-        store.put(Key::Int(3), Value::Int(999));
-
-        // Convert all to owned
-        let owned1 = borrowed_to_owned(&store.get(&Key::Int(1)).unwrap());
-        let owned2 = borrowed_to_owned(&store.get(&Key::Int(2)).unwrap());
-        let owned3 = borrowed_to_owned(&store.get(&Key::Int(3)).unwrap());
-
-        assert_eq!(owned1, OwnedEntry::Text("first".to_string()));
-        assert_eq!(owned2, OwnedEntry::Text("second".to_string()));
-        assert_eq!(owned3, OwnedEntry::Int(999));
+        store.put(Key::String("c".into()), Value::String("hello".into()));
+        let b = store.get(&Key::String("c".into())).unwrap();
+        let owned = borrowed_to_owned(&b);
+        assert_eq!(owned, OwnedEntry::Text("hello".into()));
     }
 }
