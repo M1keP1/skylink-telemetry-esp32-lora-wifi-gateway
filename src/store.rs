@@ -1,4 +1,4 @@
-use crate::{borrowed_to_owned, deserialize_value, serialize_value, BorrowedEntry, Key, OwnedEntry, Value};
+pub(crate) use crate::{borrowed_to_owned, deserialize_value, serialize_value, BorrowedEntry, Key, OwnedEntry, StoreIterator, Value};
 use std::collections::HashMap;
 
 pub struct Store {
@@ -29,6 +29,30 @@ impl Store {
         let (entry, _) = deserialize_value(&self.data[pos..])?;
         Some(entry)
     }
+
+    pub fn display_all(&self) {
+        println!("=== Store Contents ===");
+        for (key, value) in self.iter() {
+            println!("{:?} -> {:?}", key, value);
+        }
+        println!("=== Total: {} entries ===", self.iter().count());
+    }
+
+    pub fn iter(&self) -> StoreIterator {
+        StoreIterator {
+            store: self,
+            keys_iter: self.index.keys(),
+        }
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &Key> {
+        self.index.keys()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = BorrowedEntry> {
+        self.iter().map(|(_, value)| value)
+    }
+
 }
 
 #[cfg(test)]

@@ -16,4 +16,6 @@ fn main() {
     // Trying to get a non-existent key 2
     let missing_key = Key::Int(2);
     println!("Getting Key: 2 -> {:?}", store.get(&missing_key));
+    
+    store.display_all();
 }

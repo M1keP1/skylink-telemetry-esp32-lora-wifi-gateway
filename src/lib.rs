@@ -35,25 +35,34 @@ struct RawHeader {
     tag: u8,
 }
 
+pub struct StoreIterator<'a> {
+    store: &'a Store,
+    keys_iter: std::collections::hash_map::Keys<'a, Key, usize>,
+}
+
 unsafe fn serialize_header_unsafe(header: &RawHeader, buffer: &mut Vec<u8>) {
     // SAFETY: repr(C, packed) guarantees layout, we allocate enough space and immediately write
-    let header_size = std::mem::size_of::<RawHeader>();
+    let header_size = size_of::<RawHeader>();
     let offset = buffer.len();
     buffer.reserve(header_size);
-    buffer.set_len(offset + header_size);
-    let dest_ptr = buffer.as_mut_ptr().add(offset);
-    let header_ptr = header as *const RawHeader;
-    ptr::copy_nonoverlapping(header_ptr as *const u8, dest_ptr, header_size);
+    unsafe {
+        buffer.set_len(offset + header_size);
+        let dest_ptr = buffer.as_mut_ptr().add(offset);
+        let header_ptr = header as *const RawHeader;
+        ptr::copy_nonoverlapping(header_ptr as *const u8, dest_ptr, header_size);
+    }
 }
 
 unsafe fn deserialize_header_unsafe(bytes: &[u8]) -> Option<RawHeader> {
     // SAFETY: read_unaligned is used because data may not be aligned
-    let header_size = std::mem::size_of::<RawHeader>();
+    let header_size = size_of::<RawHeader>();
     if bytes.len() < header_size {
         return None;
     }
     let header_ptr = bytes.as_ptr() as *const RawHeader;
-    Some(ptr::read_unaligned(header_ptr))
+    unsafe {
+        Some(ptr::read_unaligned(header_ptr))
+    }
 }
 
 fn calculate_crc32(data: &[u8]) -> u32 {
@@ -87,7 +96,7 @@ fn serialize_value(value: &Value) -> Vec<u8> {
 }
 
 fn deserialize_value(bytes: &[u8]) -> Option<(BorrowedEntry, usize)> {
-    let header_size = std::mem::size_of::<RawHeader>();
+    let header_size = size_of::<RawHeader>();
     if bytes.len() < header_size {
         return None;
     }
@@ -143,6 +152,15 @@ fn owned_to_value(entry: &OwnedEntry) -> Value {
     }
 }
 
+impl<'a> Iterator for StoreIterator<'a> {
+    type Item = (&'a Key, BorrowedEntry<'a>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let key = self.keys_iter.next()?;
+        let value = self.store.get(&key);
+        Some((key, value.unwrap()))
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,7 +183,7 @@ mod tests {
     fn test_checksum_catches_corruption() {
         let v = Value::String("abcdef".into());
         let mut s = serialize_value(&v);
-        let header_size = std::mem::size_of::<RawHeader>();
+        let header_size = size_of::<RawHeader>();
         s[header_size] ^= 0xFF;
         deserialize_value(&s);
     }
@@ -186,6 +204,49 @@ mod tests {
         assert_eq!(owned_to_value(&o), Value::String("x".into()));
         let o2 = OwnedEntry::Int(5);
         assert_eq!(owned_to_value(&o2), Value::Int(5));
+    }
+    #[test]
+    fn test_store_iterator() {
+        let mut store = Store::new();
+
+        store.put(Key::String("k1".into()), Value::Int(1));
+        store.put(Key::Int(2), Value::String("v2".into()));
+        store.put(Key::String("k3".into()), Value::String("v3".into()));
+
+        let mut entries: Vec<_> = store.iter().collect();
+
+        assert_eq!(entries.len(), 3);
+
+        let mut found_items = 0;
+        for (key, value) in entries {
+            match (key, value) {
+                (Key::String(s), BorrowedEntry::Int(1)) if s == "k1" => found_items += 1,
+                (Key::Int(2), BorrowedEntry::Text("v2")) => found_items += 1,
+                (Key::String(s), BorrowedEntry::Text("v3")) if s == "k3" => found_items += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(found_items, 3);
+    }
+
+    #[test]
+    fn test_keys_iterator() {
+        let mut store = Store::new();
+        store.put(Key::String("a".into()), Value::Int(1));
+        store.put(Key::Int(42), Value::String("test".into()));
+
+        let keys: Vec<_> = store.keys().collect();
+        assert_eq!(keys.len(), 2);
+    }
+
+    #[test]
+    fn test_values_iterator() {
+        let mut store = Store::new();
+        store.put(Key::String("a".into()), Value::Int(1));
+        store.put(Key::String("b".into()), Value::String("hello".into()));
+
+        let values: Vec<_> = store.values().collect();
+        assert_eq!(values.len(), 2);
     }
 }
 
