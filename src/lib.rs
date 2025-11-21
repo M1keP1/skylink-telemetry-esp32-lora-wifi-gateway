@@ -14,25 +14,15 @@ pub enum Value {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum BorrowedEntry<'a>{
+pub enum BorrowedEntry<'a> {
     Int(i64),
-    String(&'a str),
+    Text(&'a str),
 }
-fn serialize_key(key: &Key) -> Vec<u8> {
-    match key {
-        Key::String(s) => {
-            let mut bytes = vec![0x01];
-            let s_bytes = s.as_bytes();
-            bytes.extend_from_slice(&(s_bytes.len() as u64).to_le_bytes());
-            bytes.extend_from_slice(s_bytes);
-            bytes
-        }
-        Key::Int(i) => {
-            let mut bytes = vec![0x02];
-            bytes.extend_from_slice(&i.to_le_bytes());
-            bytes
-        }
-    }
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum OwnedEntry {
+    Int(i64),
+    Text(String),
 }
 
 fn serialize_value(value: &Value) -> Vec<u8> {
@@ -44,7 +34,6 @@ fn serialize_value(value: &Value) -> Vec<u8> {
             bytes.extend_from_slice(s_bytes);
             bytes
         }
-
         Value::Int(i) => {
             let mut bytes = vec![0x02];
             bytes.extend_from_slice(&i.to_le_bytes());
@@ -53,21 +42,7 @@ fn serialize_value(value: &Value) -> Vec<u8> {
     }
 }
 
-fn serialize_entry(key: &Key, value: &Value) -> Vec<u8> {
-    let key_bytes = serialize_key(key);
-    let value_bytes = serialize_value(value);
-
-    let total_len = (key_bytes.len() + value_bytes.len()) as u64;
-    let mut bytes = Vec::with_capacity(8 + total_len as usize);
-
-    bytes.extend_from_slice(&total_len.to_le_bytes());
-    bytes.extend_from_slice(&key_bytes);
-    bytes.extend_from_slice(&value_bytes);
-
-    bytes
-}
-
-fn deserialize_item(bytes: &[u8]) -> Option<(BorrowedEntry, usize)> {
+fn deserialize_value(bytes: &[u8]) -> Option<(BorrowedEntry, usize)> {
     if bytes.is_empty() {
         return None;
     }
@@ -81,46 +56,30 @@ fn deserialize_item(bytes: &[u8]) -> Option<(BorrowedEntry, usize)> {
                 return None;
             }
             let s = std::str::from_utf8(&bytes[9..9 + len]).ok()?;
-            Some((BorrowedEntry::String(s),9 + len))
+            Some((BorrowedEntry::Text(s), 9 + len))
         }
         0x02 => {
             if bytes.len() < 9 {
                 return None;
             }
             let i = i64::from_le_bytes((&bytes[1..9]).try_into().unwrap());
-            Some((BorrowedEntry::Int(i),9))
+            Some((BorrowedEntry::Int(i), 9))
         }
         _ => None,
     }
 }
 
-fn deserialize_entry(bytes: &[u8]) -> Option<((BorrowedEntry, BorrowedEntry), usize)> {
-    if bytes.len() < 8 {
-        return None;
-    }
-    let total_len = u64::from_le_bytes((&bytes[0..8]).try_into().unwrap()) as usize;
-    if bytes.len() < 8 + total_len {
-        return None;
-    }
-    let mut offset = 8;
-    let (key, key_len) = deserialize_item(&bytes[offset..])?;
-    offset += key_len;
-    let (value, value_len) = deserialize_item(&bytes[offset..])?;
-    offset += value_len;
-    Some(((key, value), offset))
-}
-
-fn borrowed_to_owned_key(be: &BorrowedEntry) -> Key {
-    match be {
-        BorrowedEntry::Int(i) => Key::Int(*i),
-        BorrowedEntry::String(s) => Key::String(s.to_string()),
+fn borrowed_to_owned(entry: &BorrowedEntry) -> OwnedEntry {
+    match entry {
+        BorrowedEntry::Int(i) => OwnedEntry::Int(*i),
+        BorrowedEntry::Text(s) => OwnedEntry::Text(s.to_string()),
     }
 }
 
-fn borrowed_to_owned_value(be: &BorrowedEntry) -> Value {
-    match be {
-        BorrowedEntry::Int(i) => Value::Int(*i),
-        BorrowedEntry::String(s) => Value::String(s.to_string()),
+fn owned_to_value(entry: &OwnedEntry) -> Value {
+    match entry {
+        OwnedEntry::Int(i) => Value::Int(*i),
+        OwnedEntry::Text(s) => Value::String(s.clone()),
     }
 }
 
@@ -129,42 +88,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_serialize_deserialize_entry() {
-        let key = Key::String("hello".to_string());
+    fn test_serialize_deserialize_value() {
         let value = Value::Int(2025);
-        let serialized = serialize_entry(&key, &value);
-        if let Some(((d_key, d_value), _)) = deserialize_entry(&serialized) {
-            assert_eq!(d_key, BorrowedEntry::String("hello"));
+        let serialized = serialize_value(&value);
+        if let Some((d_value, _)) = deserialize_value(&serialized) {
             assert_eq!(d_value, BorrowedEntry::Int(2025));
         } else {
-            panic!("Failed to deserialize whole entry");
+            panic!("Failed to deserialize value");
+        }
+
+        let value2 = Value::String("hello".to_string());
+        let serialized2 = serialize_value(&value2);
+        if let Some((d_value2, _)) = deserialize_value(&serialized2) {
+            assert_eq!(d_value2, BorrowedEntry::Text("hello"));
+        } else {
+            panic!("Failed to deserialize value");
         }
     }
 
     #[test]
     fn test_borrowed_to_owned_conversions() {
-        // Borrowed string with Int
-        let borrowed = BorrowedEntry::String("hello");
-        let owned_key = borrowed_to_owned_key(&borrowed);
-        let owned_value = borrowed_to_owned_value(&borrowed);
+        // Test Text conversion
+        let borrowed_text = BorrowedEntry::Text("hello");
+        let owned = borrowed_to_owned(&borrowed_text);
+        assert_eq!(owned, OwnedEntry::Text("hello".to_string()));
 
-        assert_eq!(owned_key, Key::String("hello".to_string()));
-        assert_eq!(owned_value, Value::String("hello".to_string()));
-
-        // Borrowed int
+        // Test Int conversion
         let borrowed_int = BorrowedEntry::Int(42);
-        let owned_key2 = borrowed_to_owned_key(&borrowed_int);
-        let owned_value2 = borrowed_to_owned_value(&borrowed_int);
-
-        assert_eq!(owned_key2, Key::Int(42));
-        assert_eq!(owned_value2, Value::Int(42));
+        let owned_int = borrowed_to_owned(&borrowed_int);
+        assert_eq!(owned_int, OwnedEntry::Int(42));
     }
+
+    #[test]
+    fn test_owned_to_value_conversions() {
+        let owned_text = OwnedEntry::Text("world".to_string());
+        let value = owned_to_value(&owned_text);
+        assert_eq!(value, Value::String("world".to_string()));
+
+        let owned_int = OwnedEntry::Int(100);
+        let value_int = owned_to_value(&owned_int);
+        assert_eq!(value_int, Value::Int(100));
+    }
+
 }
 
-//[ total_len: u64 (8 bytes) ]
-// [ key_type_tag: u8 (1 byte) ]
-// [ key_data_len (if string): u64 (8 bytes), else none ]
-// [ key_data (bytes) ]
+// Storage format (in data Vec<u8>):
 // [ value_type_tag: u8 (1 byte) ]
 // [ value_data_len (if string): u64 (8 bytes), else none ]
 // [ value_data (bytes) ]
