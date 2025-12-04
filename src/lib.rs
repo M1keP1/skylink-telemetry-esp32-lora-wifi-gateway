@@ -3,6 +3,7 @@ pub use store::Store;
 
 use std::ptr;
 use std::convert::TryInto;
+use anyhow::{Result, Context, bail};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum Key {
@@ -34,11 +35,13 @@ struct RawHeader {
     checksum: u32,
     tag: u8,
 }
+
 //For index based iterator
 pub struct StoreIterator<'a> {
     store: &'a Store,
     keys_iter: std::collections::hash_map::Keys<'a, Key, usize>,
 }
+
 //For Sequential Buffer Iterator
 pub struct StoreIter<'a> {
     buf: &'a [u8],
@@ -100,46 +103,67 @@ fn serialize_value(value: &Value) -> Vec<u8> {
     out
 }
 
-fn deserialize_value(bytes: &[u8]) -> Option<(BorrowedEntry, usize)> {
+fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize)> {
     let header_size = size_of::<RawHeader>();
     if bytes.len() < header_size {
-        return None;
+        bail!("Buffer too short for header: expected at least {} bytes, got {}",
+              header_size, bytes.len());
     }
 
-    let header = unsafe { deserialize_header_unsafe(bytes)? };
+    let header = unsafe {
+        deserialize_header_unsafe(bytes)
+            .ok_or_else(|| anyhow::anyhow!("Failed to deserialize header"))?
+    };
 
     let length = header.length as usize;
     if bytes.len() < header_size + length {
-        return None;
+        bail!("Buffer too short for value data: expected {} bytes, got {}",
+              header_size + length, bytes.len());
     }
 
     let value_data = &bytes[header_size..header_size + length];
 
+    // Verify checksum
     let actual = calculate_crc32(value_data);
     if actual != header.checksum {
-        panic!("Checksum mismatch! Data corruption detected.");
+        bail!("Failed to verify CRC32");
     }
 
     match header.tag {
         0x01 => {
+            // String type
             if value_data.len() < 8 {
-                return None;
+                bail!("String value data too short: expected at least 8 bytes for length, got {}",
+                      value_data.len());
             }
-            let len = u64::from_le_bytes(value_data[0..8].try_into().unwrap()) as usize;
+            let len = u64::from_le_bytes(
+                value_data[0..8].try_into()
+                    .context("Failed to read string length")?
+            ) as usize;
+
             if value_data.len() < 8 + len {
-                return None;
+                bail!("String value data too short: expected {} bytes, got {}",
+                      8 + len, value_data.len());
             }
-            let s = std::str::from_utf8(&value_data[8..8 + len]).ok()?;
-            Some((BorrowedEntry::Text(s), header_size + length))
+
+            let s = std::str::from_utf8(&value_data[8..8 + len])
+                .context("Invalid UTF-8 in string data")?;
+
+            Ok((BorrowedEntry::Text(s), header_size + length))
         }
         0x02 => {
+            // Int type
             if value_data.len() < 8 {
-                return None;
+                bail!("Int value data too short: expected 8 bytes, got {}",
+                      value_data.len());
             }
-            let v = i64::from_le_bytes(value_data[0..8].try_into().unwrap());
-            Some((BorrowedEntry::Int(v), header_size + length))
+            let v = i64::from_le_bytes(
+                value_data[0..8].try_into()
+                    .context("Failed to read int value")?
+            );
+            Ok((BorrowedEntry::Int(v), header_size + length))
         }
-        _ => None,
+        _ => bail!("Unknown tag value: 0x{:02x}", header.tag),
     }
 }
 
@@ -158,27 +182,34 @@ fn owned_to_value(entry: &OwnedEntry) -> Value {
 }
 
 impl<'a> Iterator for StoreIterator<'a> {
-    type Item = (&'a Key, BorrowedEntry<'a>);
+    type Item = (&'a Key, Result<BorrowedEntry<'a>>);
 
     fn next(&mut self) -> Option<Self::Item> {
         let key = self.keys_iter.next()?;
         let value = self.store.get(&key);
-        Some((key, value.unwrap()))
+        Some((key, value))
     }
 }
 
 impl<'a> Iterator for StoreIter<'a> {
-    type Item = BorrowedEntry<'a>;
+    type Item = Result<BorrowedEntry<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.pos >= self.buf.len() {
             return None;
         }
 
-        let(entry, bytes_read) = deserialize_value(&self.buf[self.pos..])?;
-        self.pos += bytes_read;
-
-        Some(entry)
+        match deserialize_value(&self.buf[self.pos..]) {
+            Ok((entry, bytes_read)) => {
+                self.pos += bytes_read;
+                Some(Ok(entry))
+            }
+            Err(e) => {
+                // Move to end to stop iteration after error
+                self.pos = self.buf.len();
+                Some(Err(e))
+            }
+        }
     }
 }
 
@@ -187,26 +218,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_roundtrip_values() {
+    fn test_roundtrip_values() -> Result<()> {
         let v = Value::Int(2025);
         let s = serialize_value(&v);
-        let (out, _) = deserialize_value(&s).unwrap();
+        let (out, _) = deserialize_value(&s)?;
         assert_eq!(out, BorrowedEntry::Int(2025));
 
         let v2 = Value::String("hello".into());
         let s2 = serialize_value(&v2);
-        let (out2, _) = deserialize_value(&s2).unwrap();
+        let (out2, _) = deserialize_value(&s2)?;
         assert_eq!(out2, BorrowedEntry::Text("hello"));
+
+        Ok(())
     }
 
     #[test]
-    #[should_panic(expected = "Checksum mismatch")]
     fn test_checksum_catches_corruption() {
         let v = Value::String("abcdef".into());
         let mut s = serialize_value(&v);
         let header_size = size_of::<RawHeader>();
         s[header_size] ^= 0xFF;
-        deserialize_value(&s);
+
+        let result = deserialize_value(&s);
+        assert!(result.is_err());
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Failed to verify CRC32"));
     }
 
     #[test]
@@ -226,20 +263,22 @@ mod tests {
         let o2 = OwnedEntry::Int(5);
         assert_eq!(owned_to_value(&o2), Value::Int(5));
     }
+
     #[test]
-    fn test_store_iterator() {
+    fn test_store_iterator() -> Result<()> {
         let mut store = Store::new();
 
         store.put(Key::String("k1".into()), Value::Int(1));
         store.put(Key::Int(2), Value::String("v2".into()));
         store.put(Key::String("k3".into()), Value::String("v3".into()));
 
-        let mut entries: Vec<_> = store.iter().collect();
+        let entries: Vec<_> = store.iter().collect();
 
         assert_eq!(entries.len(), 3);
 
         let mut found_items = 0;
-        for (key, value) in entries {
+        for (key, value_result) in entries {
+            let value = value_result?;
             match (key, value) {
                 (Key::String(s), BorrowedEntry::Int(1)) if s == "k1" => found_items += 1,
                 (Key::Int(2), BorrowedEntry::Text("v2")) => found_items += 1,
@@ -248,6 +287,8 @@ mod tests {
             }
         }
         assert_eq!(found_items, 3);
+
+        Ok(())
     }
 
     #[test]
@@ -261,30 +302,36 @@ mod tests {
     }
 
     #[test]
-    fn test_values_iterator() {
+    fn test_values_iterator() -> Result<()> {
         let mut store = Store::new();
         store.put(Key::String("a".into()), Value::Int(1));
         store.put(Key::String("b".into()), Value::String("hello".into()));
 
-        let values: Vec<_> = store.values().collect();
+        let values: Result<Vec<_>> = store.values().collect();
+        let values = values?;
         assert_eq!(values.len(), 2);
+
+        Ok(())
     }
 
     #[test]
-    fn test_buffer_iterator_preserves_order() {
+    fn test_buffer_iterator_preserves_order() -> Result<()> {
         let mut store = Store::new();
 
         store.put(Key::String("first".into()), Value::Int(1));
         store.put(Key::String("second".into()), Value::Int(2));
         store.put(Key::String("third".into()), Value::Int(3));
 
-        let values: Vec<_> = store.buffer_iter().collect();
+        let values: Result<Vec<_>> = store.buffer_iter().collect();
+        let values = values?;
 
         assert_eq!(values, vec![
             BorrowedEntry::Int(1),
             BorrowedEntry::Int(2),
             BorrowedEntry::Int(3),
         ]);
+
+        Ok(())
     }
 }
 

@@ -5,62 +5,67 @@
 //! 2. **test_no_garbage_beyond_buffer**: Ensures no invalid data is yielded
 //! 3. **test_iterator_borrows_no_allocations**: Proves zero-copy iteration with stats_alloc
 
-
 use kiwi_store::{Store, Key, Value, BorrowedEntry};
 use stats_alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM};
 use std::alloc::System;
+use anyhow::Result;
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
-fn main() {
+fn main() -> Result<()> {
     println!("=== Example 2: Buffer Iterator Tests ===\n");
-    
-    test_iterator_stops_correctly();
-    test_no_garbage_beyond_buffer();
-    test_iterator_borrows_no_allocations();
-    
+
+    test_iterator_stops_correctly()?;
+    test_no_garbage_beyond_buffer()?;
+    test_iterator_borrows_no_allocations()?;
+
     println!("\n=== All tests passed! ===");
+    Ok(())
 }
 
 /// Test 1: Verify that the iterator stops at the correct position
-fn test_iterator_stops_correctly() {
+fn test_iterator_stops_correctly() -> Result<()> {
     println!("Test 1: Iterator stops at correct position");
-    
+
     let mut store = Store::new();
-    
+
     store.put(Key::String("first".into()), Value::Int(1));
     store.put(Key::String("second".into()), Value::Int(2));
     store.put(Key::String("third".into()), Value::Int(3));
     store.put(Key::String("fourth".into()), Value::String("hello".into()));
     store.put(Key::String("fifth".into()), Value::String("world".into()));
-    
-    let entries: Vec<_> = store.buffer_iter().collect();
-    
+
+    let entries: Result<Vec<_>> = store.buffer_iter().collect();
+    let entries = entries?;
+
     assert_eq!(entries.len(), 5, "Iterator should yield exactly 5 entries");
-    
+
     assert_eq!(entries[0], BorrowedEntry::Int(1));
     assert_eq!(entries[1], BorrowedEntry::Int(2));
     assert_eq!(entries[2], BorrowedEntry::Int(3));
     assert_eq!(entries[3], BorrowedEntry::Text("hello"));
     assert_eq!(entries[4], BorrowedEntry::Text("world"));
-    
-    println!("Iterator yielded exactly {} entries", entries.len());
-    println!("All entries are correct\n");
+
+    println!("  ✓ Iterator yielded exactly {} entries", entries.len());
+    println!("  ✓ All entries are correct\n");
+
+    Ok(())
 }
 
 /// Test 2: Verify no garbage is yielded beyond the buffer
-fn test_no_garbage_beyond_buffer() {
+fn test_no_garbage_beyond_buffer() -> Result<()> {
     println!("Test 2: No garbage beyond buffer");
-    
+
     let mut store = Store::new();
-    
+
     store.put(Key::Int(1), Value::Int(100));
     store.put(Key::Int(2), Value::String("test".into()));
     store.put(Key::Int(3), Value::Int(200));
-    
+
     let mut count = 0;
-    for entry in store.buffer_iter() {
+    for entry_result in store.buffer_iter() {
+        let entry = entry_result?;
         count += 1;
         match entry {
             BorrowedEntry::Int(i) => {
@@ -71,28 +76,31 @@ fn test_no_garbage_beyond_buffer() {
             }
         }
     }
-    
+
     assert_eq!(count, 3, "Should iterate exactly 3 times, not more");
-    
+
     println!("  ✓ Iterator stopped after {} valid entries", count);
     println!("  ✓ No garbage values were yielded\n");
+
+    Ok(())
 }
 
 /// Test 3: Verify that iteration borrows data without allocations
-fn test_iterator_borrows_no_allocations() {
+fn test_iterator_borrows_no_allocations() -> Result<()> {
     println!("Test 3: Iteration borrows data (no heap allocations)");
-    
+
     let mut store = Store::new();
-    
+
     store.put(Key::String("key1".into()), Value::String("value1".into()));
     store.put(Key::String("key2".into()), Value::Int(42));
     store.put(Key::String("key3".into()), Value::String("value3".into()));
     store.put(Key::String("key4".into()), Value::Int(99));
-    
+
     let reg = Region::new(&GLOBAL);
-    
+
     let mut entry_count = 0;
-    for entry in store.buffer_iter() {
+    for entry_result in store.buffer_iter() {
+        let entry = entry_result?;
         entry_count += 1;
         match entry {
             BorrowedEntry::Int(i) => {
@@ -103,16 +111,16 @@ fn test_iterator_borrows_no_allocations() {
             }
         }
     }
-    
+
     let stats = reg.change();
-    
+
     println!("  Iteration statistics:");
     println!("    - Entries processed: {}", entry_count);
     println!("    - Allocations: {}", stats.allocations);
     println!("    - Deallocations: {}", stats.deallocations);
     println!("    - Bytes allocated: {}", stats.bytes_allocated);
     println!("    - Bytes deallocated: {}", stats.bytes_deallocated);
-    
+
     assert_eq!(
         stats.allocations, 0,
         "Iterator should not allocate memory (found {} allocations)",
@@ -123,7 +131,9 @@ fn test_iterator_borrows_no_allocations() {
         "Iterator should not allocate bytes (found {} bytes)",
         stats.bytes_allocated
     );
-    
-    println!("Zero allocations during iteration");
-    println!("Data is borrowed, not cloned\n");
+
+    println!("  ✓ Zero allocations during iteration");
+    println!("  ✓ Data is borrowed, not cloned\n");
+
+    Ok(())
 }
