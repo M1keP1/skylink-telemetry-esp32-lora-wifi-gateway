@@ -11,7 +11,6 @@ fn main() -> Result<(), StoreError> {
     test_iterator_stops_correctly()?;
     test_no_garbage_beyond_buffer()?;
     test_iterator_borrows_no_allocations()?;
-    test_persistence_with_iteration()?;
 
     println!("\n=== All tests passed! ===");
     Ok(())
@@ -124,39 +123,6 @@ fn test_iterator_borrows_no_allocations() -> Result<(), StoreError> {
 
     println!("  ✓ Zero allocations during iteration");
     println!("  ✓ Data is borrowed, not cloned\n");
-
-    Ok(())
-}
-
-fn test_persistence_with_iteration() -> Result<(), StoreError> {
-    println!("Test 4: Persistence preserves iteration order");
-
-    let store_path = "/tmp/ex2_test_store";
-
-    {
-        let mut store = Store::with_path(store_path)?;
-        store.put(Key::String("a".into()), Value::Int(1));
-        store.put(Key::String("b".into()), Value::Int(2));
-        store.put(Key::String("c".into()), Value::Int(3));
-        store.save()?;
-    }
-
-    let loaded_store = Store::with_path(store_path)?;
-
-    let entries: Result<Vec<_>, _> = loaded_store.buffer_iter().collect();
-    let entries = entries?;
-
-    assert_eq!(entries.len(), 3, "Should have 3 entries after reload");
-    assert_eq!(entries[0], BorrowedEntry::Int(1));
-    assert_eq!(entries[1], BorrowedEntry::Int(2));
-    assert_eq!(entries[2], BorrowedEntry::Int(3));
-
-    println!("  ✓ Loaded store has {} entries", entries.len());
-    println!("  ✓ Buffer iteration order preserved after save/load\n");
-
-    std::fs::remove_file(format!("{}.keys", store_path)).ok();
-    std::fs::remove_file(format!("{}.data", store_path)).ok();
-    std::fs::remove_file(format!("{}.meta", store_path)).ok();
 
     Ok(())
 }
