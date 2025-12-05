@@ -1,10 +1,3 @@
-//! Example 2: Testing StoreIter (Buffer Iterator)
-
-//! ## Tests Included:
-//! 1. **test_iterator_stops_correctly**: Verifies exact entry count
-//! 2. **test_no_garbage_beyond_buffer**: Ensures no invalid data is yielded
-//! 3. **test_iterator_borrows_no_allocations**: Proves zero-copy iteration with stats_alloc
-
 use kiwi_store::{Store, Key, Value, BorrowedEntry, StoreError};
 use stats_alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM};
 use std::alloc::System;
@@ -13,17 +6,17 @@ use std::alloc::System;
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 fn main() -> Result<(), StoreError> {
-    println!("=== Example 2: Buffer Iterator Tests ===\n");
+    println!("=== Example 2: Buffer Iterator Tests with Persistence ===\n");
 
     test_iterator_stops_correctly()?;
     test_no_garbage_beyond_buffer()?;
     test_iterator_borrows_no_allocations()?;
+    test_persistence_with_iteration()?;
 
     println!("\n=== All tests passed! ===");
     Ok(())
 }
 
-/// Test 1: Verify that the iterator stops at the correct position
 fn test_iterator_stops_correctly() -> Result<(), StoreError> {
     println!("Test 1: Iterator stops at correct position");
 
@@ -52,7 +45,6 @@ fn test_iterator_stops_correctly() -> Result<(), StoreError> {
     Ok(())
 }
 
-/// Test 2: Verify no garbage is yielded beyond the buffer
 fn test_no_garbage_beyond_buffer() -> Result<(), StoreError> {
     println!("Test 2: No garbage beyond buffer");
 
@@ -84,7 +76,6 @@ fn test_no_garbage_beyond_buffer() -> Result<(), StoreError> {
     Ok(())
 }
 
-/// Test 3: Verify that iteration borrows data without allocations
 fn test_iterator_borrows_no_allocations() -> Result<(), StoreError> {
     println!("Test 3: Iteration borrows data (no heap allocations)");
 
@@ -133,6 +124,39 @@ fn test_iterator_borrows_no_allocations() -> Result<(), StoreError> {
 
     println!("  ✓ Zero allocations during iteration");
     println!("  ✓ Data is borrowed, not cloned\n");
+
+    Ok(())
+}
+
+fn test_persistence_with_iteration() -> Result<(), StoreError> {
+    println!("Test 4: Persistence preserves iteration order");
+
+    let store_path = "/tmp/ex2_test_store";
+
+    {
+        let mut store = Store::with_path(store_path)?;
+        store.put(Key::String("a".into()), Value::Int(1));
+        store.put(Key::String("b".into()), Value::Int(2));
+        store.put(Key::String("c".into()), Value::Int(3));
+        store.save()?;
+    }
+
+    let loaded_store = Store::with_path(store_path)?;
+
+    let entries: Result<Vec<_>, _> = loaded_store.buffer_iter().collect();
+    let entries = entries?;
+
+    assert_eq!(entries.len(), 3, "Should have 3 entries after reload");
+    assert_eq!(entries[0], BorrowedEntry::Int(1));
+    assert_eq!(entries[1], BorrowedEntry::Int(2));
+    assert_eq!(entries[2], BorrowedEntry::Int(3));
+
+    println!("  ✓ Loaded store has {} entries", entries.len());
+    println!("  ✓ Buffer iteration order preserved after save/load\n");
+
+    std::fs::remove_file(format!("{}.keys", store_path)).ok();
+    std::fs::remove_file(format!("{}.data", store_path)).ok();
+    std::fs::remove_file(format!("{}.meta", store_path)).ok();
 
     Ok(())
 }

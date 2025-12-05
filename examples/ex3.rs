@@ -1,14 +1,10 @@
-// Showcase demonstrating error handling with thiserror:
-// 1. Key not found error with pattern matching
-// 2. Type-safe error handling (can match on specific error types)
-// 3. Iterator error handling
-
 use kiwi_store::{Store, Key, Value, StoreError};
 
 fn main() -> Result<(), StoreError> {
     example_1_pattern_matching();
     example_2_different_error_types();
     example_3_iterator_error_handling()?;
+    example_4_io_error_handling()?;
     Ok(())
 }
 
@@ -19,7 +15,7 @@ fn example_1_pattern_matching() {
     match store.get(&Key::String("nonexistent".into())) {
         Ok(value) => println!("Value: {:?}", value),
         Err(StoreError::KeyNotFound(k)) => {
-            println!("Key {:?} not found",k);
+            println!("✓ Key {:?} not found (expected)", k);
         }
         Err(StoreError::DataCorruption { .. }) => {
             println!("Data corruption");
@@ -27,6 +23,7 @@ fn example_1_pattern_matching() {
         Err(StoreError::InvalidData { .. }) => {
             println!("Invalid data format");
         }
+        Err(e) => println!("Other error: {}", e),
     }
     println!();
 }
@@ -57,6 +54,7 @@ fn example_2_different_error_types() {
             Err(StoreError::InvalidData { .. }) => {
                 println!("✗ Invalid data format");
             }
+            Err(e) => println!("✗ Other error: {}", e),
         }
     }
     println!();
@@ -80,6 +78,56 @@ fn example_3_iterator_error_handling() -> Result<(), StoreError> {
             Err(e) => println!("  Error reading {:?}: {}", key, e),
         }
     }
+    println!();
 
+    Ok(())
+}
+
+fn example_4_io_error_handling() -> Result<(), StoreError> {
+    println!("=== Example 4: File I/O Error Handling ===");
+
+    let store_path = "/tmp/ex3_error_demo";
+
+    {
+        let mut store = Store::with_path(store_path)?;
+        store.put(Key::String("test".into()), Value::Int(123));
+        println!("✓ Created store and added data");
+    }
+
+    println!("✓ Store auto-saved on drop");
+
+    match Store::with_path(store_path) {
+        Ok(loaded) => {
+            println!("✓ Successfully loaded store from disk");
+            match loaded.get(&Key::String("test".into())) {
+                Ok(value) => println!("✓ Retrieved value: {:?}", value),
+                Err(e) => println!("✗ Error retrieving value: {}", e),
+            }
+        }
+        Err(StoreError::IoError(e)) => {
+            println!("✗ I/O error loading store: {}", e);
+        }
+        Err(StoreError::FileCorrupted) => {
+            println!("✗ Files are corrupted!");
+        }
+        Err(StoreError::UnsupportedVersion(v)) => {
+            println!("✗ Unsupported file version: {}", v);
+        }
+        Err(e) => {
+            println!("✗ Other error: {}", e);
+        }
+    }
+
+    println!("\nTesting missing file (should create new store):");
+    match Store::with_path("/tmp/ex3_nonexistent") {
+        Ok(_) => println!("✓ Created new store for non-existent path"),
+        Err(e) => println!("✗ Unexpected error: {}", e),
+    }
+
+    std::fs::remove_file(format!("{}.keys", store_path)).ok();
+    std::fs::remove_file(format!("{}.data", store_path)).ok();
+    std::fs::remove_file(format!("{}.meta", store_path)).ok();
+
+    println!();
     Ok(())
 }

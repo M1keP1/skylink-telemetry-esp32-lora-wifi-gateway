@@ -36,19 +36,16 @@ struct RawHeader {
     tag: u8,
 }
 
-//For index based iterator
 pub struct StoreIterator<'a> {
     store: &'a Store,
     keys_iter: std::collections::hash_map::Keys<'a, Key, usize>,
 }
 
-//For Sequential Buffer Iterator
 pub struct StoreIter<'a> {
     buf: &'a [u8],
     pos: usize,
 }
 
-// Internal error - not exposed to users
 #[derive(Debug, Error)]
 enum DeserializationError {
     #[error("Buffer too short: expected {expected} bytes, got {actual}")]
@@ -67,7 +64,6 @@ enum DeserializationError {
     ByteConversionError,
 }
 
-// Public error - users can match on these
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("Key not found: {0:?}")]
@@ -84,10 +80,18 @@ pub enum StoreError {
         #[source]
         cause: DeserializationError,
     },
+
+    #[error("File I/O error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("File corrupted: checksum mismatch")]
+    FileCorrupted,
+
+    #[error("Unsupported file version: {0}")]
+    UnsupportedVersion(u32),
 }
 
 unsafe fn serialize_header_unsafe(header: &RawHeader, buffer: &mut Vec<u8>) {
-    // SAFETY: repr(C, packed) guarantees layout, we allocate enough space and immediately write
     let header_size = size_of::<RawHeader>();
     let offset = buffer.len();
     buffer.reserve(header_size);
@@ -100,7 +104,6 @@ unsafe fn serialize_header_unsafe(header: &RawHeader, buffer: &mut Vec<u8>) {
 }
 
 unsafe fn deserialize_header_unsafe(bytes: &[u8]) -> Option<RawHeader> {
-    // SAFETY: read_unaligned is used because data may not be aligned
     let header_size = size_of::<RawHeader>();
     if bytes.len() < header_size {
         return None;
@@ -111,7 +114,7 @@ unsafe fn deserialize_header_unsafe(bytes: &[u8]) -> Option<RawHeader> {
     }
 }
 
-fn calculate_crc32(data: &[u8]) -> u32 {
+pub(crate) fn calculate_crc32(data: &[u8]) -> u32 {
     crc32fast::hash(data)
 }
 
@@ -168,7 +171,6 @@ fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize), Deserializa
 
     let value_data = &bytes[header_size..header_size + length];
 
-    // Verify checksum
     let actual = calculate_crc32(value_data);
     if actual != header.checksum {
         return Err(DeserializationError::ChecksumMismatch {
@@ -179,7 +181,6 @@ fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize), Deserializa
 
     match header.tag {
         0x01 => {
-            // String type
             if value_data.len() < 8 {
                 return Err(DeserializationError::BufferTooShort {
                     expected: 8,
@@ -203,7 +204,6 @@ fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize), Deserializa
             Ok((BorrowedEntry::Text(s), header_size + length))
         }
         0x02 => {
-            // Int type
             if value_data.len() < 8 {
                 return Err(DeserializationError::BufferTooShort {
                     expected: 8,
@@ -217,6 +217,74 @@ fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize), Deserializa
             Ok((BorrowedEntry::Int(v), header_size + length))
         }
         _ => Err(DeserializationError::UnknownTag(header.tag)),
+    }
+}
+
+pub(crate) fn serialize_key(key: &Key) -> Vec<u8> {
+    match key {
+        Key::String(s) => {
+            let mut out = Vec::new();
+            out.push(0x01u8);
+            let bytes = s.as_bytes();
+            out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+            out.extend_from_slice(bytes);
+            out
+        }
+        Key::Int(i) => {
+            let mut out = Vec::new();
+            out.push(0x02u8);
+            out.extend_from_slice(&i.to_le_bytes());
+            out
+        }
+    }
+}
+
+pub(crate) fn deserialize_key(bytes: &[u8]) -> Result<(Key, usize), DeserializationError> {
+    if bytes.is_empty() {
+        return Err(DeserializationError::BufferTooShort {
+            expected: 1,
+            actual: 0,
+        });
+    }
+
+    let tag = bytes[0];
+    match tag {
+        0x01 => {
+            if bytes.len() < 9 {
+                return Err(DeserializationError::BufferTooShort {
+                    expected: 9,
+                    actual: bytes.len(),
+                });
+            }
+            let len = u64::from_le_bytes(
+                bytes[1..9].try_into()
+                    .map_err(|_| DeserializationError::ByteConversionError)?
+            ) as usize;
+
+            if bytes.len() < 9 + len {
+                return Err(DeserializationError::BufferTooShort {
+                    expected: 9 + len,
+                    actual: bytes.len(),
+                });
+            }
+
+            let s = std::str::from_utf8(&bytes[9..9 + len])?;
+            Ok((Key::String(s.to_string()), 9 + len))
+        }
+        0x02 => {
+            if bytes.len() < 9 {
+                return Err(DeserializationError::BufferTooShort {
+                    expected: 9,
+                    actual: bytes.len(),
+                });
+            }
+            let i = i64::from_le_bytes(
+                bytes[1..9].try_into()
+                    .map_err(|_| DeserializationError::ByteConversionError)?
+            );
+            Ok((Key::Int(i), 9))
+        }
+        _ => Err(DeserializationError::UnknownTag(tag)),
     }
 }
 
@@ -258,9 +326,7 @@ impl<'a> Iterator for StoreIter<'a> {
                 Some(Ok(entry))
             }
             Err(e) => {
-                // Move to end to stop iteration after error
                 self.pos = self.buf.len();
-                // Convert DeserializationError to StoreError
                 let store_error = match e {
                     DeserializationError::ChecksumMismatch { .. } => {
                         StoreError::DataCorruption { cause: e }
@@ -394,10 +460,3 @@ mod tests {
         Ok(())
     }
 }
-
-// Vec<u8> layout:
-// [ RawHeader(length u64 | checksum u32 | tag u8) ]
-// [ value_data ]
-//
-// value_data for String = [ u64 len ][ bytes ]
-// value_data for Int    = [ i64 bytes ]
