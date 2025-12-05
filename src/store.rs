@@ -1,7 +1,6 @@
-pub(crate) use crate::{borrowed_to_owned, deserialize_value, serialize_value, BorrowedEntry, Key, OwnedEntry, StoreIterator, Value};
+pub(crate) use crate::{borrowed_to_owned, deserialize_value, serialize_value, BorrowedEntry, Key, OwnedEntry, StoreIterator, Value, DeserializationError};
 use std::collections::HashMap;
-use crate::StoreIter;
-use anyhow::{Result, Context, bail};
+use crate::{StoreIter, StoreError};
 
 pub struct Store {
     index: HashMap<Key, usize>,
@@ -23,21 +22,34 @@ impl Store {
         self.index.insert(key, pos);
     }
 
-    pub fn get<'a>(&'a self, key: &Key) -> Result<BorrowedEntry<'a>> {
+    pub fn get<'a>(&'a self, key: &Key) -> Result<BorrowedEntry<'a>, StoreError> {
         let pos = *self.index.get(key)
-            .ok_or_else(|| anyhow::anyhow!("Key not found: {:?}", key))?;
+            .ok_or_else(|| StoreError::KeyNotFound(key.clone()))?;
 
         if pos >= self.data.len() {
-            bail!("Invalid offset {} for data buffer of size {}", pos, self.data.len());
+            return Err(StoreError::InvalidData {
+                cause: DeserializationError::BufferTooShort {
+                    expected: pos + 1,
+                    actual: self.data.len(),
+                },
+            });
         }
 
         let (entry, _) = deserialize_value(&self.data[pos..])
-            .context(format!("Failed to deserialize value at offset {}", pos))?;
+            .map_err(|cause| {
+                // Convert internal deserialization errors to public StoreError
+                match cause {
+                    DeserializationError::ChecksumMismatch { .. } => {
+                        StoreError::DataCorruption { cause }
+                    }
+                    _ => StoreError::InvalidData { cause }
+                }
+            })?;
 
         Ok(entry)
     }
 
-    pub fn display_all(&self) -> Result<()> {
+    pub fn display_all(&self) -> Result<(), StoreError> {
         println!("=== Store Contents ===");
         let mut count = 0;
 
@@ -75,7 +87,7 @@ impl Store {
         self.index.keys()
     }
 
-    pub fn values(&self) -> impl Iterator<Item = Result<BorrowedEntry>> {
+    pub fn values(&self) -> impl Iterator<Item = Result<BorrowedEntry, StoreError>> {
         self.iter().map(|(_, value)| value)
     }
 }
@@ -85,7 +97,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_multiple_entries() -> Result<()> {
+    fn test_multiple_entries() -> Result<(), StoreError> {
         let mut store = Store::new();
 
         store.put(Key::String("k1".into()), Value::Int(1));
@@ -99,13 +111,13 @@ mod tests {
         // Test key not found error
         let result = store.get(&Key::Int(999));
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Key not found"));
+        assert!(matches!(result.unwrap_err(), StoreError::KeyNotFound(_)));
 
         Ok(())
     }
 
     #[test]
-    fn test_overwrite_behavior() -> Result<()> {
+    fn test_overwrite_behavior() -> Result<(), StoreError> {
         let mut store = Store::new();
         store.put(Key::Int(1), Value::Int(10));
         assert_eq!(store.get(&Key::Int(1))?, BorrowedEntry::Int(10));
@@ -117,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn test_borrowed_lifetime() -> Result<()> {
+    fn test_borrowed_lifetime() -> Result<(), StoreError> {
         let mut store = Store::new();
         store.put(Key::String("t".into()), Value::String("abc".into()));
 
@@ -133,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn test_borrowed_to_owned_roundtrip() -> Result<()> {
+    fn test_borrowed_to_owned_roundtrip() -> Result<(), StoreError> {
         let mut store = Store::new();
         store.put(Key::String("c".into()), Value::String("hello".into()));
 

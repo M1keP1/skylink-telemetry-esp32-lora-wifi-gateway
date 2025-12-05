@@ -3,7 +3,7 @@ pub use store::Store;
 
 use std::ptr;
 use std::convert::TryInto;
-use anyhow::{Result, Context, bail};
+use thiserror::Error;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum Key {
@@ -46,6 +46,44 @@ pub struct StoreIterator<'a> {
 pub struct StoreIter<'a> {
     buf: &'a [u8],
     pos: usize,
+}
+
+// Internal error - not exposed to users
+#[derive(Debug, Error)]
+enum DeserializationError {
+    #[error("Buffer too short: expected {expected} bytes, got {actual}")]
+    BufferTooShort { expected: usize, actual: usize },
+
+    #[error("Invalid UTF-8 in string data")]
+    InvalidUtf8(#[from] std::str::Utf8Error),
+
+    #[error("Unknown tag value: 0x{0:02x}")]
+    UnknownTag(u8),
+
+    #[error("Checksum mismatch: expected 0x{expected:08x}, got 0x{actual:08x}")]
+    ChecksumMismatch { expected: u32, actual: u32 },
+
+    #[error("Failed to convert bytes")]
+    ByteConversionError,
+}
+
+// Public error - users can match on these
+#[derive(Debug, Error)]
+pub enum StoreError {
+    #[error("Key not found: {0:?}")]
+    KeyNotFound(Key),
+
+    #[error("Data corruption detected")]
+    DataCorruption {
+        #[source]
+        cause: DeserializationError,
+    },
+
+    #[error("Invalid data format")]
+    InvalidData {
+        #[source]
+        cause: DeserializationError,
+    },
 }
 
 unsafe fn serialize_header_unsafe(header: &RawHeader, buffer: &mut Vec<u8>) {
@@ -103,22 +141,29 @@ fn serialize_value(value: &Value) -> Vec<u8> {
     out
 }
 
-fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize)> {
+fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize), DeserializationError> {
     let header_size = size_of::<RawHeader>();
     if bytes.len() < header_size {
-        bail!("Buffer too short for header: expected at least {} bytes, got {}",
-              header_size, bytes.len());
+        return Err(DeserializationError::BufferTooShort {
+            expected: header_size,
+            actual: bytes.len(),
+        });
     }
 
     let header = unsafe {
         deserialize_header_unsafe(bytes)
-            .ok_or_else(|| anyhow::anyhow!("Failed to deserialize header"))?
+            .ok_or(DeserializationError::BufferTooShort {
+                expected: header_size,
+                actual: bytes.len(),
+            })?
     };
 
     let length = header.length as usize;
     if bytes.len() < header_size + length {
-        bail!("Buffer too short for value data: expected {} bytes, got {}",
-              header_size + length, bytes.len());
+        return Err(DeserializationError::BufferTooShort {
+            expected: header_size + length,
+            actual: bytes.len(),
+        });
     }
 
     let value_data = &bytes[header_size..header_size + length];
@@ -126,44 +171,52 @@ fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize)> {
     // Verify checksum
     let actual = calculate_crc32(value_data);
     if actual != header.checksum {
-        bail!("Failed to verify CRC32");
+        return Err(DeserializationError::ChecksumMismatch {
+            expected: header.checksum,
+            actual,
+        });
     }
 
     match header.tag {
         0x01 => {
             // String type
             if value_data.len() < 8 {
-                bail!("String value data too short: expected at least 8 bytes for length, got {}",
-                      value_data.len());
+                return Err(DeserializationError::BufferTooShort {
+                    expected: 8,
+                    actual: value_data.len(),
+                });
             }
             let len = u64::from_le_bytes(
                 value_data[0..8].try_into()
-                    .context("Failed to read string length")?
+                    .map_err(|_| DeserializationError::ByteConversionError)?
             ) as usize;
 
             if value_data.len() < 8 + len {
-                bail!("String value data too short: expected {} bytes, got {}",
-                      8 + len, value_data.len());
+                return Err(DeserializationError::BufferTooShort {
+                    expected: 8 + len,
+                    actual: value_data.len(),
+                });
             }
 
-            let s = std::str::from_utf8(&value_data[8..8 + len])
-                .context("Invalid UTF-8 in string data")?;
+            let s = std::str::from_utf8(&value_data[8..8 + len])?;
 
             Ok((BorrowedEntry::Text(s), header_size + length))
         }
         0x02 => {
             // Int type
             if value_data.len() < 8 {
-                bail!("Int value data too short: expected 8 bytes, got {}",
-                      value_data.len());
+                return Err(DeserializationError::BufferTooShort {
+                    expected: 8,
+                    actual: value_data.len(),
+                });
             }
             let v = i64::from_le_bytes(
                 value_data[0..8].try_into()
-                    .context("Failed to read int value")?
+                    .map_err(|_| DeserializationError::ByteConversionError)?
             );
             Ok((BorrowedEntry::Int(v), header_size + length))
         }
-        _ => bail!("Unknown tag value: 0x{:02x}", header.tag),
+        _ => Err(DeserializationError::UnknownTag(header.tag)),
     }
 }
 
@@ -182,7 +235,7 @@ fn owned_to_value(entry: &OwnedEntry) -> Value {
 }
 
 impl<'a> Iterator for StoreIterator<'a> {
-    type Item = (&'a Key, Result<BorrowedEntry<'a>>);
+    type Item = (&'a Key, Result<BorrowedEntry<'a>, StoreError>);
 
     fn next(&mut self) -> Option<Self::Item> {
         let key = self.keys_iter.next()?;
@@ -192,7 +245,7 @@ impl<'a> Iterator for StoreIterator<'a> {
 }
 
 impl<'a> Iterator for StoreIter<'a> {
-    type Item = Result<BorrowedEntry<'a>>;
+    type Item = Result<BorrowedEntry<'a>, StoreError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.pos >= self.buf.len() {
@@ -207,7 +260,14 @@ impl<'a> Iterator for StoreIter<'a> {
             Err(e) => {
                 // Move to end to stop iteration after error
                 self.pos = self.buf.len();
-                Some(Err(e))
+                // Convert DeserializationError to StoreError
+                let store_error = match e {
+                    DeserializationError::ChecksumMismatch { .. } => {
+                        StoreError::DataCorruption { cause: e }
+                    }
+                    _ => StoreError::InvalidData { cause: e }
+                };
+                Some(Err(store_error))
             }
         }
     }
@@ -218,7 +278,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_roundtrip_values() -> Result<()> {
+    fn test_roundtrip_values() -> Result<(), DeserializationError> {
         let v = Value::Int(2025);
         let s = serialize_value(&v);
         let (out, _) = deserialize_value(&s)?;
@@ -242,8 +302,8 @@ mod tests {
         let result = deserialize_value(&s);
         assert!(result.is_err());
 
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Failed to verify CRC32"));
+        let err = result.unwrap_err();
+        assert!(matches!(err, DeserializationError::ChecksumMismatch { .. }));
     }
 
     #[test]
@@ -265,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn test_store_iterator() -> Result<()> {
+    fn test_store_iterator() -> Result<(), StoreError> {
         let mut store = Store::new();
 
         store.put(Key::String("k1".into()), Value::Int(1));
@@ -302,12 +362,12 @@ mod tests {
     }
 
     #[test]
-    fn test_values_iterator() -> Result<()> {
+    fn test_values_iterator() -> Result<(), StoreError> {
         let mut store = Store::new();
         store.put(Key::String("a".into()), Value::Int(1));
         store.put(Key::String("b".into()), Value::String("hello".into()));
 
-        let values: Result<Vec<_>> = store.values().collect();
+        let values: Result<Vec<_>, _> = store.values().collect();
         let values = values?;
         assert_eq!(values.len(), 2);
 
@@ -315,14 +375,14 @@ mod tests {
     }
 
     #[test]
-    fn test_buffer_iterator_preserves_order() -> Result<()> {
+    fn test_buffer_iterator_preserves_order() -> Result<(), StoreError> {
         let mut store = Store::new();
 
         store.put(Key::String("first".into()), Value::Int(1));
         store.put(Key::String("second".into()), Value::Int(2));
         store.put(Key::String("third".into()), Value::Int(3));
 
-        let values: Result<Vec<_>> = store.buffer_iter().collect();
+        let values: Result<Vec<_>, _> = store.buffer_iter().collect();
         let values = values?;
 
         assert_eq!(values, vec![

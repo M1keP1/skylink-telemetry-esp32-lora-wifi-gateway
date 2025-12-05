@@ -5,15 +5,14 @@
 //! 2. **test_no_garbage_beyond_buffer**: Ensures no invalid data is yielded
 //! 3. **test_iterator_borrows_no_allocations**: Proves zero-copy iteration with stats_alloc
 
-use kiwi_store::{Store, Key, Value, BorrowedEntry};
+use kiwi_store::{Store, Key, Value, BorrowedEntry, StoreError};
 use stats_alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM};
 use std::alloc::System;
-use anyhow::Result;
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
-fn main() -> Result<()> {
+fn main() -> Result<(), StoreError> {
     println!("=== Example 2: Buffer Iterator Tests ===\n");
 
     test_iterator_stops_correctly()?;
@@ -25,7 +24,7 @@ fn main() -> Result<()> {
 }
 
 /// Test 1: Verify that the iterator stops at the correct position
-fn test_iterator_stops_correctly() -> Result<()> {
+fn test_iterator_stops_correctly() -> Result<(), StoreError> {
     println!("Test 1: Iterator stops at correct position");
 
     let mut store = Store::new();
@@ -36,7 +35,7 @@ fn test_iterator_stops_correctly() -> Result<()> {
     store.put(Key::String("fourth".into()), Value::String("hello".into()));
     store.put(Key::String("fifth".into()), Value::String("world".into()));
 
-    let entries: Result<Vec<_>> = store.buffer_iter().collect();
+    let entries: Result<Vec<_>, _> = store.buffer_iter().collect();
     let entries = entries?;
 
     assert_eq!(entries.len(), 5, "Iterator should yield exactly 5 entries");
@@ -54,7 +53,7 @@ fn test_iterator_stops_correctly() -> Result<()> {
 }
 
 /// Test 2: Verify no garbage is yielded beyond the buffer
-fn test_no_garbage_beyond_buffer() -> Result<()> {
+fn test_no_garbage_beyond_buffer() -> Result<(), StoreError> {
     println!("Test 2: No garbage beyond buffer");
 
     let mut store = Store::new();
@@ -86,7 +85,7 @@ fn test_no_garbage_beyond_buffer() -> Result<()> {
 }
 
 /// Test 3: Verify that iteration borrows data without allocations
-fn test_iterator_borrows_no_allocations() -> Result<()> {
+fn test_iterator_borrows_no_allocations() -> Result<(), StoreError> {
     println!("Test 3: Iteration borrows data (no heap allocations)");
 
     let mut store = Store::new();
