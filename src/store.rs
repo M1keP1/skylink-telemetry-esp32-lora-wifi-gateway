@@ -54,6 +54,56 @@ impl Store {
 
         Ok(entry)
     }
+    pub fn delete(&mut self, key: &Key) -> Result<(), StoreError> {
+        self.index.remove(key)
+            .ok_or_else(|| StoreError::KeyNotFound(key.clone()))?;
+        Ok(())
+    }
+    pub fn compact(&mut self) -> Result<usize, StoreError> {
+        let old_size = self.data.len();
+        let mut new_data = Vec::new();
+        let mut new_index = HashMap::new();
+
+        for (key, old_offset) in &self.index {
+            let new_offset = new_data.len();
+
+            let (entry, _) = deserialize_value(&self.data[*old_offset..])
+                .map_err(|cause| StoreError::InvalidData { cause })?;
+
+            let owned = borrowed_to_owned(&entry);
+            let value = crate::owned_to_value(&owned);
+
+            let serialized = serialize_value(&value);
+            new_data.extend_from_slice(&serialized);
+
+            new_index.insert(key.clone(), new_offset);
+        }
+
+        let bytes_reclaimed = old_size - new_data.len();
+        self.data = new_data;
+        self.index = new_index;
+
+        Ok(bytes_reclaimed)
+    }
+
+
+    pub fn fragmentation_ratio(&self) -> f64 {
+        if self.data.is_empty() {
+            return 0.0;
+        }
+
+        let mut active_size = 0;
+        for offset in self.index.values() {
+            if let Ok((_, bytes_read)) = deserialize_value(&self.data[*offset..]) {
+                active_size += bytes_read;
+            }
+        }
+
+        let total_size = self.data.len();
+        let wasted_size = total_size.saturating_sub(active_size);
+
+        wasted_size as f64 / total_size as f64
+    }
 
     pub fn display_all(&self) -> Result<(), StoreError> {
         println!("=== Store Contents ===");
@@ -282,7 +332,82 @@ mod tests {
 
         Ok(())
     }
+    #[test]
+    fn test_delete() -> Result<(), StoreError> {
+        let mut store = Store::new();
+        store.put(Key::String("key1".into()), Value::Int(42));
+        store.put(Key::String("key2".into()), Value::Int(100));
 
+        assert_eq!(store.get(&Key::String("key1".into()))?, BorrowedEntry::Int(42));
+
+        store.delete(&Key::String("key1".into()))?;
+
+        let result = store.get(&Key::String("key1".into()));
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), StoreError::KeyNotFound(_)));
+
+        assert_eq!(store.get(&Key::String("key2".into()))?, BorrowedEntry::Int(100));
+
+        let result = store.delete(&Key::String("nonexistent".into()));
+        assert!(result.is_err());
+
+        Ok(())
+    }
+    #[test]
+    fn test_compaction() -> Result<(), StoreError> {
+        let mut store = Store::new();
+
+        store.put(Key::String("k1".into()), Value::Int(1));
+        store.put(Key::String("k2".into()), Value::Int(2));
+        store.put(Key::String("k3".into()), Value::Int(3));
+
+        let initial_size = store.data.len();
+
+        store.put(Key::String("k1".into()), Value::Int(100));
+
+        store.delete(&Key::String("k2".into()))?;
+
+        let size_before_compact = store.data.len();
+        assert!(size_before_compact > initial_size);
+
+        let bytes_reclaimed = store.compact()?;
+        assert!(bytes_reclaimed > 0);
+
+        let size_after_compact = store.data.len();
+        assert!(size_after_compact < size_before_compact);
+
+        assert_eq!(store.get(&Key::String("k1".into()))?, BorrowedEntry::Int(100));
+        assert_eq!(store.get(&Key::String("k3".into()))?, BorrowedEntry::Int(3));
+
+        let result = store.get(&Key::String("k2".into()));
+        assert!(result.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fragmentation_ratio() -> Result<(), StoreError> {
+        let mut store = Store::new();
+
+        assert_eq!(store.fragmentation_ratio(), 0.0);
+
+        store.put(Key::String("k1".into()), Value::Int(1));
+        store.put(Key::String("k2".into()), Value::Int(2));
+
+        let frag1 = store.fragmentation_ratio();
+        assert!(frag1 < 0.01);
+
+        store.put(Key::String("k1".into()), Value::Int(999));
+
+        let frag2 = store.fragmentation_ratio();
+        assert!(frag2 > frag1);
+
+        store.compact()?;
+        let frag3 = store.fragmentation_ratio();
+        assert!(frag3 < frag2);
+
+        Ok(())
+    }
     #[test]
     fn test_overwrite_behavior() -> Result<(), StoreError> {
         let mut store = Store::new();
