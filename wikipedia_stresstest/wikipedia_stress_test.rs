@@ -4,9 +4,9 @@ use std::io::{BufReader, BufRead};
 use std::time::Instant;
 use anyhow::{anyhow, Result};
 fn main() -> Result<()> {
-    let examples_dir = std::env::current_dir()?.join("examples");
+    let stresstest_dir = std::env::current_dir()?.join("wikipedia_stresstest");
 
-    let pageview_file = fs::read_dir(&examples_dir)?
+    let pageview_file = fs::read_dir(&stresstest_dir)?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .find(|path| {
@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     let file_path = match pageview_file {
         Some(path) => path,
         None => {
-            eprintln!("Error: No pageview file found in examples/ directory!");
+            eprintln!("Error: No pageview file found in wikipedia_stresstest/ directory!");
             eprintln!("\nPlease download and extract a Wikipedia pageview file:");
             return Err(anyhow!("No pageview file found"));
         }

@@ -1,9 +1,10 @@
-pub(crate) use crate::{borrowed_to_owned, deserialize_value, serialize_value, BorrowedEntry, Key, OwnedEntry, StoreIterator, Value, DeserializationError, serialize_key, deserialize_key, calculate_crc32};
+use crate::types::{Key, Value, BorrowedEntry};
+use crate::error::{StoreError, DeserializationError};
+use crate::serialization::{serialize_value, deserialize_value, serialize_key, deserialize_key, calculate_crc32};
+use crate::iterator::{StoreIterator, StoreIter};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::fs::{self};
-use std::io::{Write, Read};
-use crate::{StoreIter, StoreError};
+use std::fs;
 
 const FILE_VERSION: u32 = 1;
 
@@ -79,6 +80,11 @@ impl Store {
         self.index = new_index;
 
         Ok(bytes_reclaimed)
+    }
+
+    pub fn clear(&mut self) {
+        self.index.clear();
+        self.data.clear();
     }
 
 
@@ -312,6 +318,7 @@ impl Drop for Store {
 mod tests {
     use super::*;
     use std::fs;
+    use crate::types::{OwnedEntry, borrowed_to_owned};
 
     #[test]
     fn test_multiple_entries() -> Result<(), StoreError> {
@@ -505,6 +512,40 @@ mod tests {
         fs::remove_file(format!("{}.data", temp_path)).ok();
         fs::remove_file(format!("{}.meta", temp_path)).ok();
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_clear() -> Result<(), StoreError> {
+        let mut store = Store::new();
+        
+        // Add some data
+        store.put(Key::String("key1".into()), Value::Int(100));
+        store.put(Key::String("key2".into()), Value::String("test".into()));
+        store.put(Key::Int(42), Value::Int(999));
+        
+        // Verify data exists
+        assert_eq!(store.get(&Key::String("key1".into()))?, BorrowedEntry::Int(100));
+        assert!(store.data.len() > 0);
+        assert_eq!(store.keys().count(), 3);
+        
+        // Clear the store
+        store.clear();
+        
+        // Verify everything is gone
+        assert_eq!(store.data.len(), 0);
+        assert_eq!(store.keys().count(), 0);
+        assert_eq!(store.fragmentation_ratio(), 0.0);
+        
+        // Verify we can't get the old keys
+        let result = store.get(&Key::String("key1".into()));
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), StoreError::KeyNotFound(_)));
+        
+        // Verify we can add new data after clear
+        store.put(Key::String("new_key".into()), Value::Int(42));
+        assert_eq!(store.get(&Key::String("new_key".into()))?, BorrowedEntry::Int(42));
+        
         Ok(())
     }
 }
