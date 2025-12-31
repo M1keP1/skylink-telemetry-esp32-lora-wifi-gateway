@@ -66,15 +66,10 @@ impl Store {
 
         for (key, old_offset) in &self.index {
             let new_offset = new_data.len();
-
-            let (entry, _) = deserialize_value(&self.data[*old_offset..])
+            let (_, bytes_to_copy) = deserialize_value(&self.data[*old_offset..])
                 .map_err(|cause| StoreError::InvalidData { cause })?;
 
-            let owned = borrowed_to_owned(&entry);
-            let value = crate::owned_to_value(&owned);
-
-            let serialized = serialize_value(&value);
-            new_data.extend_from_slice(&serialized);
+            new_data.extend_from_slice(&self.data[*old_offset..*old_offset + bytes_to_copy]);
 
             new_index.insert(key.clone(), new_offset);
         }
@@ -161,7 +156,11 @@ impl Store {
         }
     }
 
-    pub fn save(&self) -> Result<(), StoreError> {
+    pub fn save(&mut self) -> Result<(), StoreError> {
+        let frag_ratio = self.fragmentation_ratio();
+        if frag_ratio > 0.35 {
+            self.compact()?;
+        }
         let base_path = self.path.as_ref()
             .ok_or_else(|| std::io::Error::new(
                 std::io::ErrorKind::Other,

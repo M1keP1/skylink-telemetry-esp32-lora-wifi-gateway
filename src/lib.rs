@@ -295,7 +295,7 @@ pub fn borrowed_to_owned(entry: &BorrowedEntry) -> OwnedEntry {
     }
 }
 
-fn owned_to_value(entry: &OwnedEntry) -> Value {
+pub fn owned_to_value(entry: &OwnedEntry) -> Value {
     match entry {
         OwnedEntry::Int(i) => Value::Int(*i),
         OwnedEntry::Text(s) => Value::String(s.clone()),
