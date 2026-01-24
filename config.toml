@@ -1,0 +1,68 @@
+# Telemetry Reciever Configuration
+
+[esp32]
+# ESP 32 Gateway Connection
+ip = "192.168.0.32"
+port = 8888
+reconnect_delay_secs = 5
+
+[storage]
+persists = true
+path = "./telemetry_data"
+auto_compact = true
+compact_threshold = 0.35
+
+[flight_detection]
+start_altitude_m = 5.0
+start_speed_ms = 2.0
+end_altitude_m = 5.0
+end_speed_ms = 2.0
+ground_stable_duration_ms = 5000
+timeout_duration_ms = 60000
+
+[api]
+enabled = true
+host = "0.0.0.0"
+port = 9091
+cors_enabled = true
+
+[payload.gps]
+latitude = "gps.lat"
+longitude = "gps.lon"
+altitude = "gps.alt"
+speed = "gps.speed"
+heading = "gps.heading"
+satellites = "gps.sats"
+fix_type = "gps.fix"
+
+[payload.barometer]
+altitude = "baro.alt"
+vertical_speed = "baro.vspeed"
+temperature = "baro.temp"
+
+[payload.imu]
+roll = "imu.roll"
+pitch = "imu.pitch"
+yaw = "imu.raw"
+gyro_x = "imu.gyro.x"
+gyro_y = "imu.gyro.y"
+gyro_z = "imu.gyro.z"
+accel_x = "imu.accel.x"
+accel_y = "imu.accel.y"
+accel_z = "imu.accel.z"
+
+[payload.battery]
+voltage = "battery.voltage"
+current = "battery.current"
+power = "battery.power"
+mah_used = "battery.mah_used"
+
+[payload.link]
+rssi = "link.rssi"
+snr = "link.snr"
+
+[payload.metadata]
+sequence = "seq"
+timestamp = "timestamp"
+phase = "phase"
+status = "status"

@@ -4,6 +4,7 @@ mod error;
 mod serialization;
 mod iterator;
 mod store;
+pub mod telemetry;
 
 // Public API re-exports
 pub use types::{Key, Value, BorrowedEntry, OwnedEntry, borrowed_to_owned, owned_to_value};
