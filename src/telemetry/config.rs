@@ -5,7 +5,7 @@ use std::error::Error;
 pub struct TelemetryConfig {
     pub esp32: Esp32Config,
     pub storage: StorageConfig,
-    pub flight_detection: FightDetectionConfig,
+    pub flight_detection: FlightDetectionConfig,
 }
 #[derive(Debug, Deserialize)]
 pub struct Esp32Config {
@@ -21,11 +21,12 @@ pub struct StorageConfig {
     pub auto_compact: bool,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct FightDetectionConfig {
+#[derive(Debug, Clone, Deserialize)]
+pub struct FlightDetectionConfig {
     pub start_altitude_m: f32,
     pub start_speed_ms: f32,
     pub end_altitude_m: f32,
+    pub min_takeoff_altitude_m: f32,
     pub end_speed_ms: f32,
     pub ground_stable_duration_ms: u64,
     pub timeout_duration_ms: u64,
