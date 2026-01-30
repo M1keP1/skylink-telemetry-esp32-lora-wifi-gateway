@@ -14,10 +14,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Packets in store: {}", key_count);
     }
 
+    // Create broadcast channel
+    let (broadcast_tx, _) = tokio::sync::broadcast::channel(100);
+
     let host = "127.0.0.1";
     let port = 3000;
 
-    start_server(store, host, port).await?;
+    start_server(store, broadcast_tx, host, port).await?;
     Ok(())
 
 }

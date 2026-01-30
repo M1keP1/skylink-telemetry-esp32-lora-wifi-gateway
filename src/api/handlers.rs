@@ -10,13 +10,17 @@ use crate::types::BorrowedEntry;
 use crate::telemetry::{TelemetryPacket, FlightMetadata};
 use super::models::*;
 
-pub type AppState = Arc<Mutex<Store>>;
+#[derive(Clone)]
+pub struct AppState {
+    pub store: Arc<Mutex<Store>>,
+    pub broadcast_tx: tokio::sync::broadcast::Sender<TelemetryPacket>,
+}
 
 pub async fn get_telemetry_range(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Query(params): Query<TelemetryQuery>,
 ) -> Result<Json<TelemetryResponse>, StatusCode> {
-    let store = store.lock().unwrap();
+    let store = state.store.lock().unwrap();
 
     let start = params.start.unwrap_or(0);
     let end = params.end.unwrap_or(u64::MAX);
@@ -55,10 +59,10 @@ pub async fn get_telemetry_range(
 }
 
 pub async fn get_telemetry_by_id(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
     Path(timestamp): Path<u64>,
 ) -> Result<Json<TelemetryPacket>, StatusCode> {
-    let store = store.lock().unwrap();
+    let store = state.store.lock().unwrap();
     let key = Key::String(format!("telem:{}", timestamp));
 
     match store.get(&key) {
@@ -77,9 +81,9 @@ pub async fn get_telemetry_by_id(
 }
 
 pub async fn get_all_flights(
-    State(store): State<AppState>,
+    State(state): State<AppState>,
 ) -> Result<Json<FlightListResponse>, StatusCode> {
-    let store = store.lock().unwrap();
+    let store = state.store.lock().unwrap();
 
     let mut flights = Vec::new();
 
