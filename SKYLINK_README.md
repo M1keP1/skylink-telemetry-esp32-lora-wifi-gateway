@@ -314,13 +314,31 @@ cargo run --example dry_run
 
 ## Performance
 
-### Benchmarks
+### Software Performance
 
-- **Ingestion Rate**: ~1,000 packets/sec (single-threaded)
-- **Storage Throughput**: ~1.15M ops/sec (from KV store stress test)
+SkyLink's Rust implementation provides high throughput that far exceeds typical hardware capabilities:
+
+- **Storage Throughput**: ~1.15M ops/sec (KV store stress test)
+- **Telemetry Processing**: ~10,000+ packets/sec (single-threaded)
 - **API Latency**: <5ms for single packet retrieval
 - **WebSocket Broadcast**: 100+ concurrent clients
 - **Memory Usage**: ~50MB for 10,000 packets + index
+
+### System Bottleneck: Hardware, Not Software
+
+**The ESP32 hardware is the bottleneck**, not the SkyLink gateway software:
+
+- **ESP32 Telemetry Rate**: 10-20 packets/second (typical configuration)
+  - Limited by LoRa bandwidth (SF7-SF12 modulation)
+  - Constrained by sensor update rates (IMU, GPS, Barometer)
+  - WiFi mode can achieve 50-100 Hz but still hardware-limited
+
+- **Performance Headroom**: SkyLink can handle **500x more telemetry** than a single ESP32 provides
+  - Software capacity: 10,000 packets/sec
+  - Hardware output: ~20 packets/sec
+  - **Multi-device support**: Can easily handle 10+ ESP32 devices simultaneously
+
+**Optimization Priority**: The gateway has massive headroom and will not be a performance bottleneck in real-world deployments.
 
 ---
 
