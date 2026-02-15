@@ -221,14 +221,30 @@ impl Store {
             });
         }
 
-        let version = u32::from_le_bytes(meta_buf[0..4].try_into().unwrap());
+        let version = u32::from_le_bytes(
+            meta_buf[0..4]
+                .try_into()
+                .map_err(|_| StoreError::FileCorrupted)?,
+        );
         if version != FILE_VERSION {
             return Err(StoreError::UnsupportedVersion(version));
         }
 
-        let stored_keys_checksum = u32::from_le_bytes(meta_buf[4..8].try_into().unwrap());
-        let stored_data_checksum = u32::from_le_bytes(meta_buf[8..12].try_into().unwrap());
-        let entry_count = u64::from_le_bytes(meta_buf[12..20].try_into().unwrap());
+        let stored_keys_checksum = u32::from_le_bytes(
+            meta_buf[4..8]
+                .try_into()
+                .map_err(|_| StoreError::FileCorrupted)?,
+        );
+        let stored_data_checksum = u32::from_le_bytes(
+            meta_buf[8..12]
+                .try_into()
+                .map_err(|_| StoreError::FileCorrupted)?,
+        );
+        let entry_count = u64::from_le_bytes(
+            meta_buf[12..20]
+                .try_into()
+                .map_err(|_| StoreError::FileCorrupted)?,
+        );
 
         let keys_buf = fs::read(&keys_path)?;
         let data_buf = fs::read(&data_path)?;
@@ -251,13 +267,17 @@ impl Store {
                 break;
             }
 
-            let key_len = u32::from_le_bytes(keys_buf[pos..pos + 4].try_into().unwrap()) as usize;
+            let key_len = u32::from_le_bytes(
+                keys_buf[pos..pos + 4]
+                    .try_into()
+                    .map_err(|_| StoreError::FileCorrupted)?,
+            ) as usize;
             pos += 4;
 
-            if pos + key_len + 8 > keys_buf.len() {
-                return Err(StoreError::InvalidData {
+            if pos + key_len > keys_buf.len() {
+                return Err(StoreError::DataCorruption {
                     cause: DeserializationError::BufferTooShort {
-                        expected: pos + key_len + 8,
+                        expected: pos + key_len,
                         actual: keys_buf.len(),
                     },
                 });
@@ -267,7 +287,20 @@ impl Store {
                 .map_err(|cause| StoreError::InvalidData { cause })?;
             pos += key_len;
 
-            let offset = u64::from_le_bytes(keys_buf[pos..pos + 8].try_into().unwrap()) as usize;
+            if pos + 8 > keys_buf.len() {
+                return Err(StoreError::DataCorruption {
+                    cause: DeserializationError::BufferTooShort {
+                        expected: pos + 8,
+                        actual: keys_buf.len(),
+                    },
+                });
+            }
+
+            let offset = u64::from_le_bytes(
+                keys_buf[pos..pos + 8]
+                    .try_into()
+                    .map_err(|_| StoreError::FileCorrupted)?,
+            ) as usize;
             pos += 8;
 
             index.insert(key, offset);

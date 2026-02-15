@@ -101,7 +101,8 @@ impl FlightDetector {
     }
 
     pub fn end_flight(&mut self, packet: &TelemetryPacket, normal: bool) -> FlightMetadata {
-        let flight = self.current_flight.take().unwrap();
+        let flight = self.current_flight.take()
+            .expect("BUG: end_flight() called with no active flight - this indicates a logic error in the detector");
 
         let duration_ms = packet.timestamp - flight.start_time;
         let duration_secs = duration_ms / 1000;

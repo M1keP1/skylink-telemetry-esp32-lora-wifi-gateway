@@ -19,7 +19,10 @@ pub async fn get_telemetry_range(
     State(state): State<AppState>,
     Query(params): Query<TelemetryQuery>,
 ) -> Result<Json<TelemetryResponse>, StatusCode> {
-    let store = state.store.lock().unwrap();
+    let store = state
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let start = params.start.unwrap_or(0);
     let end = params.end.unwrap_or(u64::MAX);
@@ -54,7 +57,10 @@ pub async fn get_telemetry_by_id(
     State(state): State<AppState>,
     Path(timestamp): Path<u64>,
 ) -> Result<Json<TelemetryPacket>, StatusCode> {
-    let store = state.store.lock().unwrap();
+    let store = state
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let key = Key::String(format!("telem:{}", timestamp));
 
     match store.get(&key) {
@@ -75,7 +81,10 @@ pub async fn get_telemetry_by_id(
 pub async fn get_all_flights(
     State(state): State<AppState>,
 ) -> Result<Json<FlightListResponse>, StatusCode> {
-    let store = state.store.lock().unwrap();
+    let store = state
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let mut flights = Vec::new();
 
@@ -98,7 +107,10 @@ pub async fn get_all_flights(
 }
 
 pub async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, StatusCode> {
-    let store = state.store.lock().unwrap();
+    let store = state
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let mut total_packets = 0;
     let mut total_flights = 0;
@@ -147,7 +159,10 @@ pub async fn delete_flight_by_id(
     State(state): State<AppState>,
     Path(flight_id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let mut store = state.store.lock().unwrap();
+    let mut store = state
+        .store
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let flight_key = Key::String(format!("flight:{}", flight_id));
 
     // Check if flight exists and get time range
