@@ -1,19 +1,16 @@
+use super::handlers::AppState;
+use crate::telemetry::TelemetryPacket;
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::Response,
 };
 use tokio::sync::broadcast;
-use crate::telemetry::TelemetryPacket;
-use super::handlers::AppState;
 
 /// WebSocket handler for live telemetry streaming
-pub async fn websocket_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
+pub async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     ws.on_upgrade(|socket| handle_socket(socket, state.broadcast_tx))
 }
 
@@ -62,4 +59,105 @@ async fn handle_socket(mut socket: WebSocket, tx: broadcast::Sender<TelemetryPac
     }
 
     println!("WebSocket client disconnected");
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::Store;
+    use crate::api::server::create_router;
+    use crate::telemetry::{
+        AccelData, Barodata, BatteryData, GpsData, GyroData, ImuData, LinkQuality, TelemetryPacket,
+    };
+    use futures_util::StreamExt;
+    use std::sync::{Arc, Mutex};
+    use tokio::net::TcpListener;
+    use tokio::sync::broadcast;
+    use tokio_tungstenite::tungstenite::Message;
+
+    #[tokio::test]
+    async fn test_websocket_broadcast() {
+        // 1. Setup Store and Broadcast Channel
+        let store = Arc::new(Mutex::new(Store::new()));
+        let (tx, _rx) = broadcast::channel(100);
+        let app = create_router(store, tx.clone());
+
+        // 2. Start Test Server on random port
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        // 3. Connect WebSocket Client
+        let ws_url = format!("ws://{}/ws/telemetry", addr);
+        let (mut socket, _response) = tokio_tungstenite::connect_async(ws_url)
+            .await
+            .expect("Failed to connect");
+
+        // 4. Send Telemetry Packet
+        let packet = TelemetryPacket {
+            seq: 1,
+            timestamp: 1234567890,
+            phase: "TEST".to_string(),
+            gps: GpsData {
+                lat: 0.0,
+                lon: 0.0,
+                alt: 0.0,
+                speed: 0.0,
+                heading: 0.0,
+                sats: 0,
+                fix: 0,
+            },
+            baro: Barodata {
+                alt: 0.0,
+                vspeed: 0.0,
+                temp: 0.0,
+            },
+            imu: ImuData {
+                roll: 0.0,
+                pitch: 0.0,
+                yaw: 0.0,
+                gyro: GyroData {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                accel: AccelData {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+            },
+            battery: BatteryData {
+                voltage: 0.0,
+                current: 0.0,
+                power: 0.0,
+                mah_used: 0.0,
+            },
+            link: LinkQuality {
+                rssi: 0.0,
+                snr: 0.0,
+            },
+            status: 0,
+        };
+
+        // Send to broadcast channel
+        tx.send(packet.clone()).unwrap();
+
+        // 5. Verify Receipt
+        if let Some(msg) = socket.next().await {
+            let msg = msg.expect("Error reading message");
+            if let Message::Text(text) = msg {
+                let received: TelemetryPacket = serde_json::from_str(&text).unwrap();
+                assert_eq!(received.timestamp, 1234567890);
+                assert_eq!(received.phase, "TEST");
+            } else {
+                panic!("Expected text message");
+            }
+        } else {
+            panic!("Stream ended without message");
+        }
+    }
 }

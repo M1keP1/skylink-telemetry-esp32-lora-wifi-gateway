@@ -1,7 +1,7 @@
-use crate::types::{Key, BorrowedEntry};
-use crate::error::{StoreError, DeserializationError};
-use crate::serialization::deserialize_value;
 use crate::Store;
+use crate::error::{DeserializationError, StoreError};
+use crate::serialization::deserialize_value;
+use crate::types::{BorrowedEntry, Key};
 
 pub struct StoreIterator<'a> {
     pub(crate) store: &'a Store,
@@ -18,7 +18,7 @@ impl<'a> Iterator for StoreIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let key = self.keys_iter.next()?;
-        let value = self.store.get(&key);
+        let value = self.store.get(key);
         Some((key, value))
     }
 }
@@ -42,7 +42,7 @@ impl<'a> Iterator for StoreIter<'a> {
                     DeserializationError::ChecksumMismatch { .. } => {
                         StoreError::DataCorruption { cause: e }
                     }
-                    _ => StoreError::InvalidData { cause: e }
+                    _ => StoreError::InvalidData { cause: e },
                 };
                 Some(Err(store_error))
             }

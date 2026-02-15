@@ -1,24 +1,24 @@
 // Module declarations
-mod types;
+pub mod api;
 mod error;
-mod serialization;
 mod iterator;
+mod serialization;
 mod store;
 pub mod telemetry;
-pub mod api;
+mod types;
 
 // Public API re-exports
-pub use types::{Key, Value, BorrowedEntry, OwnedEntry, borrowed_to_owned, owned_to_value};
 pub use error::StoreError;
+pub use iterator::{StoreIter, StoreIterator};
 pub use store::Store;
-pub use iterator::{StoreIterator, StoreIter};
+pub use types::{BorrowedEntry, Key, OwnedEntry, Value, borrowed_to_owned, owned_to_value};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serialization::{serialize_value, deserialize_value};
     use crate::error::DeserializationError;
     use crate::serialization::RawHeader;
+    use crate::serialization::{deserialize_value, serialize_value};
 
     #[test]
     fn test_roundtrip_values() -> Result<(), DeserializationError> {
@@ -128,11 +128,14 @@ mod tests {
         let values: Result<Vec<_>, _> = store.buffer_iter().collect();
         let values = values?;
 
-        assert_eq!(values, vec![
-            BorrowedEntry::Int(1),
-            BorrowedEntry::Int(2),
-            BorrowedEntry::Int(3),
-        ]);
+        assert_eq!(
+            values,
+            vec![
+                BorrowedEntry::Int(1),
+                BorrowedEntry::Int(2),
+                BorrowedEntry::Int(3),
+            ]
+        );
 
         Ok(())
     }

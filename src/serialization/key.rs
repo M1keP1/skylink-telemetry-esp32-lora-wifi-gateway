@@ -1,6 +1,6 @@
-use std::convert::TryInto;
-use crate::types::Key;
 use crate::error::DeserializationError;
+use crate::types::Key;
+use std::convert::TryInto;
 
 pub(crate) fn serialize_key(key: &Key) -> Vec<u8> {
     match key {
@@ -39,8 +39,9 @@ pub(crate) fn deserialize_key(bytes: &[u8]) -> Result<(Key, usize), Deserializat
                 });
             }
             let len = u64::from_le_bytes(
-                bytes[1..9].try_into()
-                    .map_err(|_| DeserializationError::ByteConversionError)?
+                bytes[1..9]
+                    .try_into()
+                    .map_err(|_| DeserializationError::ByteConversionError)?,
             ) as usize;
 
             if bytes.len() < 9 + len {
@@ -61,8 +62,9 @@ pub(crate) fn deserialize_key(bytes: &[u8]) -> Result<(Key, usize), Deserializat
                 });
             }
             let i = i64::from_le_bytes(
-                bytes[1..9].try_into()
-                    .map_err(|_| DeserializationError::ByteConversionError)?
+                bytes[1..9]
+                    .try_into()
+                    .map_err(|_| DeserializationError::ByteConversionError)?,
             );
             Ok((Key::Int(i), 9))
         }

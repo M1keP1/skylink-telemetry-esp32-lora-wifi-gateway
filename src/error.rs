@@ -1,5 +1,5 @@
-use thiserror::Error;
 use crate::types::Key;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DeserializationError {

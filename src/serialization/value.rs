@@ -1,7 +1,9 @@
-use std::convert::TryInto;
-use crate::types::{Value, BorrowedEntry};
+use super::header::{
+    RawHeader, calculate_crc32, deserialize_header_unsafe, serialize_header_unsafe,
+};
 use crate::error::DeserializationError;
-use super::header::{RawHeader, serialize_header_unsafe, deserialize_header_unsafe, calculate_crc32};
+use crate::types::{BorrowedEntry, Value};
+use std::convert::TryInto;
 
 pub(crate) fn serialize_value(value: &Value) -> Vec<u8> {
     let (tag, value_data) = match value {
@@ -29,7 +31,9 @@ pub(crate) fn serialize_value(value: &Value) -> Vec<u8> {
     out
 }
 
-pub(crate) fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize), DeserializationError> {
+pub(crate) fn deserialize_value(
+    bytes: &[u8],
+) -> Result<(BorrowedEntry<'_>, usize), DeserializationError> {
     let header_size = size_of::<RawHeader>();
     if bytes.len() < header_size {
         return Err(DeserializationError::BufferTooShort {
@@ -39,11 +43,10 @@ pub(crate) fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize), 
     }
 
     let header = unsafe {
-        deserialize_header_unsafe(bytes)
-            .ok_or(DeserializationError::BufferTooShort {
-                expected: header_size,
-                actual: bytes.len(),
-            })?
+        deserialize_header_unsafe(bytes).ok_or(DeserializationError::BufferTooShort {
+            expected: header_size,
+            actual: bytes.len(),
+        })?
     };
 
     let length = header.length as usize;
@@ -73,8 +76,9 @@ pub(crate) fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize), 
                 });
             }
             let len = u64::from_le_bytes(
-                value_data[0..8].try_into()
-                    .map_err(|_| DeserializationError::ByteConversionError)?
+                value_data[0..8]
+                    .try_into()
+                    .map_err(|_| DeserializationError::ByteConversionError)?,
             ) as usize;
 
             if value_data.len() < 8 + len {
@@ -96,8 +100,9 @@ pub(crate) fn deserialize_value(bytes: &[u8]) -> Result<(BorrowedEntry, usize), 
                 });
             }
             let v = i64::from_le_bytes(
-                value_data[0..8].try_into()
-                    .map_err(|_| DeserializationError::ByteConversionError)?
+                value_data[0..8]
+                    .try_into()
+                    .map_err(|_| DeserializationError::ByteConversionError)?,
             );
             Ok((BorrowedEntry::Int(v), header_size + length))
         }

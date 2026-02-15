@@ -1,5 +1,5 @@
+use crate::telemetry::{FlightMetadata, TelemetryPacket};
 use serde::{Deserialize, Serialize};
-use crate::telemetry::{TelemetryPacket, FlightMetadata};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TelemetryResponse {

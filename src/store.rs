@@ -1,10 +1,12 @@
-use crate::types::{Key, Value, BorrowedEntry};
-use crate::error::{StoreError, DeserializationError};
-use crate::serialization::{serialize_value, deserialize_value, serialize_key, deserialize_key, calculate_crc32};
-use crate::iterator::{StoreIterator, StoreIter};
+use crate::error::{DeserializationError, StoreError};
+use crate::iterator::{StoreIter, StoreIterator};
+use crate::serialization::{
+    calculate_crc32, deserialize_key, deserialize_value, serialize_key, serialize_value,
+};
+use crate::types::{BorrowedEntry, Key, Value};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 const FILE_VERSION: u32 = 1;
 
@@ -12,6 +14,12 @@ pub struct Store {
     index: HashMap<Key, usize>,
     data: Vec<u8>,
     path: Option<PathBuf>,
+}
+
+impl Default for Store {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Store {
@@ -31,7 +39,9 @@ impl Store {
     }
 
     pub fn get<'a>(&'a self, key: &Key) -> Result<BorrowedEntry<'a>, StoreError> {
-        let pos = *self.index.get(key)
+        let pos = *self
+            .index
+            .get(key)
             .ok_or_else(|| StoreError::KeyNotFound(key.clone()))?;
 
         if pos >= self.data.len() {
@@ -43,20 +53,16 @@ impl Store {
             });
         }
 
-        let (entry, _) = deserialize_value(&self.data[pos..])
-            .map_err(|cause| {
-                match cause {
-                    DeserializationError::ChecksumMismatch { .. } => {
-                        StoreError::DataCorruption { cause }
-                    }
-                    _ => StoreError::InvalidData { cause }
-                }
-            })?;
+        let (entry, _) = deserialize_value(&self.data[pos..]).map_err(|cause| match cause {
+            DeserializationError::ChecksumMismatch { .. } => StoreError::DataCorruption { cause },
+            _ => StoreError::InvalidData { cause },
+        })?;
 
         Ok(entry)
     }
     pub fn delete(&mut self, key: &Key) -> Result<(), StoreError> {
-        self.index.remove(key)
+        self.index
+            .remove(key)
             .ok_or_else(|| StoreError::KeyNotFound(key.clone()))?;
         Ok(())
     }
@@ -86,7 +92,6 @@ impl Store {
         self.index.clear();
         self.data.clear();
     }
-
 
     pub fn fragmentation_ratio(&self) -> f64 {
         if self.data.is_empty() {
@@ -126,14 +131,14 @@ impl Store {
         Ok(())
     }
 
-    pub fn iter(&self) -> StoreIterator {
+    pub fn iter(&self) -> StoreIterator<'_> {
         StoreIterator {
             store: self,
             keys_iter: self.index.keys(),
         }
     }
 
-    pub fn buffer_iter(&self) -> StoreIter {
+    pub fn buffer_iter(&self) -> StoreIter<'_> {
         StoreIter {
             buf: &self.data,
             pos: 0,
@@ -144,7 +149,7 @@ impl Store {
         self.index.keys()
     }
 
-    pub fn values(&self) -> impl Iterator<Item = Result<BorrowedEntry, StoreError>> {
+    pub fn values(&self) -> impl Iterator<Item = Result<BorrowedEntry<'_>, StoreError>> {
         self.iter().map(|(_, value)| value)
     }
 
@@ -167,11 +172,10 @@ impl Store {
         if frag_ratio > 0.35 {
             self.compact()?;
         }
-        let base_path = self.path.as_ref()
-            .ok_or_else(|| std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "No path set for store"
-            ))?;
+        let base_path = self
+            .path
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("No path set for store"))?;
 
         let keys_path = Self::keys_path(base_path);
         let data_path = Self::data_path(base_path);
@@ -247,7 +251,7 @@ impl Store {
                 break;
             }
 
-            let key_len = u32::from_le_bytes(keys_buf[pos..pos+4].try_into().unwrap()) as usize;
+            let key_len = u32::from_le_bytes(keys_buf[pos..pos + 4].try_into().unwrap()) as usize;
             pos += 4;
 
             if pos + key_len + 8 > keys_buf.len() {
@@ -259,11 +263,11 @@ impl Store {
                 });
             }
 
-            let (key, _) = deserialize_key(&keys_buf[pos..pos+key_len])
+            let (key, _) = deserialize_key(&keys_buf[pos..pos + key_len])
                 .map_err(|cause| StoreError::InvalidData { cause })?;
             pos += key_len;
 
-            let offset = u64::from_le_bytes(keys_buf[pos..pos+8].try_into().unwrap()) as usize;
+            let offset = u64::from_le_bytes(keys_buf[pos..pos + 8].try_into().unwrap()) as usize;
             pos += 8;
 
             index.insert(key, offset);
@@ -317,8 +321,8 @@ impl Drop for Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use crate::types::{OwnedEntry, borrowed_to_owned};
+    use std::fs;
 
     #[test]
     fn test_multiple_entries() -> Result<(), StoreError> {
@@ -330,7 +334,10 @@ mod tests {
 
         assert_eq!(store.get(&Key::String("k1".into()))?, BorrowedEntry::Int(1));
         assert_eq!(store.get(&Key::Int(2))?, BorrowedEntry::Text("v2"));
-        assert_eq!(store.get(&Key::String("k3".into()))?, BorrowedEntry::Text("v3"));
+        assert_eq!(
+            store.get(&Key::String("k3".into()))?,
+            BorrowedEntry::Text("v3")
+        );
 
         let result = store.get(&Key::Int(999));
         assert!(result.is_err());
@@ -344,7 +351,10 @@ mod tests {
         store.put(Key::String("key1".into()), Value::Int(42));
         store.put(Key::String("key2".into()), Value::Int(100));
 
-        assert_eq!(store.get(&Key::String("key1".into()))?, BorrowedEntry::Int(42));
+        assert_eq!(
+            store.get(&Key::String("key1".into()))?,
+            BorrowedEntry::Int(42)
+        );
 
         store.delete(&Key::String("key1".into()))?;
 
@@ -352,7 +362,10 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), StoreError::KeyNotFound(_)));
 
-        assert_eq!(store.get(&Key::String("key2".into()))?, BorrowedEntry::Int(100));
+        assert_eq!(
+            store.get(&Key::String("key2".into()))?,
+            BorrowedEntry::Int(100)
+        );
 
         let result = store.delete(&Key::String("nonexistent".into()));
         assert!(result.is_err());
@@ -382,7 +395,10 @@ mod tests {
         let size_after_compact = store.data.len();
         assert!(size_after_compact < size_before_compact);
 
-        assert_eq!(store.get(&Key::String("k1".into()))?, BorrowedEntry::Int(100));
+        assert_eq!(
+            store.get(&Key::String("k1".into()))?,
+            BorrowedEntry::Int(100)
+        );
         assert_eq!(store.get(&Key::String("k3".into()))?, BorrowedEntry::Int(3));
 
         let result = store.get(&Key::String("k2".into()));
@@ -466,8 +482,14 @@ mod tests {
         }
 
         let loaded_store = Store::load(temp_path)?;
-        assert_eq!(loaded_store.get(&Key::String("key1".into()))?, BorrowedEntry::Int(42));
-        assert_eq!(loaded_store.get(&Key::Int(100))?, BorrowedEntry::Text("test"));
+        assert_eq!(
+            loaded_store.get(&Key::String("key1".into()))?,
+            BorrowedEntry::Int(42)
+        );
+        assert_eq!(
+            loaded_store.get(&Key::Int(100))?,
+            BorrowedEntry::Text("test")
+        );
 
         fs::remove_file(format!("{}.keys", temp_path)).ok();
         fs::remove_file(format!("{}.data", temp_path)).ok();
@@ -487,7 +509,10 @@ mod tests {
         }
 
         let reloaded = Store::with_path(temp_path)?;
-        assert_eq!(reloaded.get(&Key::String("auto".into()))?, BorrowedEntry::Int(123));
+        assert_eq!(
+            reloaded.get(&Key::String("auto".into()))?,
+            BorrowedEntry::Int(123)
+        );
 
         fs::remove_file(format!("{}.keys", temp_path)).ok();
         fs::remove_file(format!("{}.data", temp_path)).ok();
@@ -506,7 +531,10 @@ mod tests {
         }
 
         let reloaded = Store::load(temp_path)?;
-        assert_eq!(reloaded.get(&Key::String("drop_test".into()))?, BorrowedEntry::Int(777));
+        assert_eq!(
+            reloaded.get(&Key::String("drop_test".into()))?,
+            BorrowedEntry::Int(777)
+        );
 
         fs::remove_file(format!("{}.keys", temp_path)).ok();
         fs::remove_file(format!("{}.data", temp_path)).ok();
@@ -518,34 +546,40 @@ mod tests {
     #[test]
     fn test_clear() -> Result<(), StoreError> {
         let mut store = Store::new();
-        
+
         // Add some data
         store.put(Key::String("key1".into()), Value::Int(100));
         store.put(Key::String("key2".into()), Value::String("test".into()));
         store.put(Key::Int(42), Value::Int(999));
-        
+
         // Verify data exists
-        assert_eq!(store.get(&Key::String("key1".into()))?, BorrowedEntry::Int(100));
-        assert!(store.data.len() > 0);
+        assert_eq!(
+            store.get(&Key::String("key1".into()))?,
+            BorrowedEntry::Int(100)
+        );
+        assert!(!store.data.is_empty());
         assert_eq!(store.keys().count(), 3);
-        
+
         // Clear the store
         store.clear();
-        
+
         // Verify everything is gone
         assert_eq!(store.data.len(), 0);
         assert_eq!(store.keys().count(), 0);
         assert_eq!(store.fragmentation_ratio(), 0.0);
-        
+
         // Verify we can't get the old keys
         let result = store.get(&Key::String("key1".into()));
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), StoreError::KeyNotFound(_)));
-        
+
         // Verify we can add new data after clear
         store.put(Key::String("new_key".into()), Value::Int(42));
-        assert_eq!(store.get(&Key::String("new_key".into()))?, BorrowedEntry::Int(42));
-        
+        assert_eq!(
+            store.get(&Key::String("new_key".into()))?,
+            BorrowedEntry::Int(42)
+        );
+
         Ok(())
     }
 }
