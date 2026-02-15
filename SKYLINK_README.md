@@ -348,6 +348,20 @@ This is a learning project. Use it however you want.
 
 ---
 
+## Contributors
+
+### Backend System (SkyLink Gateway)
+- **Mihir Kumar Patel** (1123669) - Lead Developer
+  - Core telemetry gateway implementation
+  - KV store design and optimization
+  - Flight detection state machine
+  - REST/WebSocket API architecture
+
+### Frontend (Dashboard)
+
+
+---
+
 ## Acknowledgments
 
 - Built with [Axum](https://github.com/tokio-rs/axum) for the REST/WebSocket API
