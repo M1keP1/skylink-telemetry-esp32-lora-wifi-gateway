@@ -84,9 +84,10 @@ impl FlightDetector {
     pub fn start_flight(&mut self, packet: &TelemetryPacket) {
         self.flight_counter += 1;
         let flight_id = format!("flight_{:03}", self.flight_counter);
-        println!(
-            "\n Flight_id: {} Started at timestamp {}",
-            flight_id, packet.timestamp
+        tracing::info!(
+            flight_id = %flight_id,
+            timestamp = packet.timestamp,
+            "Flight started"
         );
         self.current_flight = Some(FlightSession {
             flight_id,
@@ -100,9 +101,12 @@ impl FlightDetector {
         });
     }
 
-    pub fn end_flight(&mut self, packet: &TelemetryPacket, normal: bool) -> FlightMetadata {
+    /// Internal method to end the current flight session.
+    /// This is private to prevent external calls when no flight is active.
+    /// Only callable from process_packet() which ensures a flight exists.
+    fn end_flight(&mut self, packet: &TelemetryPacket, normal: bool) -> FlightMetadata {
         let flight = self.current_flight.take()
-            .expect("BUG: end_flight() called with no active flight - this indicates a logic error in the detector");
+            .expect("INTERNAL BUG: end_flight() called with no active flight");
 
         let duration_ms = packet.timestamp - flight.start_time;
         let duration_secs = duration_ms / 1000;
@@ -120,18 +124,21 @@ impl FlightDetector {
         };
 
         if metadata.max_altitude > self.config.min_takeoff_altitude_m {
-            println!(
-                "\n Flight ended: {} ({} packets, {:.1}s)",
-                metadata.flight_id, metadata.packet_count, metadata.duration_secs
-            );
-            println!(
-                " Max alt: {:.1}m, Min batt: {:.1}V, Normal: {}",
-                metadata.max_altitude, metadata.min_battery, metadata.ended_normally
+            tracing::info!(
+                flight_id = %metadata.flight_id,
+                packet_count = metadata.packet_count,
+                duration_secs = metadata.duration_secs,
+                max_altitude = metadata.max_altitude,
+                min_battery = metadata.min_battery,
+                ended_normally = metadata.ended_normally,
+                "Flight ended"
             );
         } else {
-            println!(
-                "\n Taxing event discarded: {} (max alt {:.1}m - never took off,need {:.1})m)",
-                metadata.flight_id, metadata.max_altitude, self.config.min_takeoff_altitude_m
+            tracing::debug!(
+                flight_id = %metadata.flight_id,
+                max_altitude = metadata.max_altitude,
+                min_takeoff_altitude = self.config.min_takeoff_altitude_m,
+                "Taxiing event discarded (never took off)"
             );
         }
 

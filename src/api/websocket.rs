@@ -18,7 +18,7 @@ pub async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<AppStat
 async fn handle_socket(mut socket: WebSocket, tx: broadcast::Sender<TelemetryPacket>) {
     let mut rx = tx.subscribe();
 
-    println!("WebSocket client connected");
+    tracing::info!("WebSocket client connected");
 
     // Send packets to the client
     loop {
@@ -31,7 +31,7 @@ async fn handle_socket(mut socket: WebSocket, tx: broadcast::Sender<TelemetryPac
                         let json = match serde_json::to_string(&p) {
                             Ok(j) => j,
                             Err(e) => {
-                                eprintln!("Failed to serialize packet: {}", e);
+                                tracing::error!(error = %e, "Failed to serialize packet");
                                 continue;
                             }
                         };
@@ -58,7 +58,7 @@ async fn handle_socket(mut socket: WebSocket, tx: broadcast::Sender<TelemetryPac
         }
     }
 
-    println!("WebSocket client disconnected");
+    tracing::info!("WebSocket client disconnected");
 }
 
 #[cfg(test)]

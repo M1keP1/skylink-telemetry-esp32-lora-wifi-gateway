@@ -6,21 +6,29 @@ use tokio::net::TcpStream;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== SkyLink Wet Run (Hardware Connected) ===\n");
+    // Initialize tracing subscriber for structured logging
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::INFO.into())
+        )
+        .init();
+
+    tracing::info!("=== SkyLink Wet Run (Hardware Connected) ===");
 
     // Load configuration
     let config = TelemetryConfig::load()?;
-    println!("✓ Config Loaded");
-    println!("  ESP32 Address: {}", config.esp32_address());
-    println!("  API Server: http://127.0.0.1:3000\n");
+    tracing::info!("Configuration loaded");
+    tracing::info!(esp32_address = %config.esp32_address(), "ESP32 connection target");
+    tracing::info!("API Server will start on http://127.0.0.1:3000");
 
     // Create shared store
     let store = Arc::new(Mutex::new(Store::new()));
-    println!("Shared Store initialized");
+    tracing::debug!("Shared store initialized");
 
     // Create broadcast channel for live streaming (capacity: 100 packets)
     let (broadcast_tx, _) = tokio::sync::broadcast::channel(100);
-    println!("Broadcast channel created for WebSocket streaming\n");
+    tracing::debug!("Broadcast channel created for WebSocket streaming");
 
     // Clone store references for both tasks
     let receiver_store = Arc::clone(&store);
@@ -30,10 +38,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Spawn API server task
     let api_task = tokio::spawn(async move {
-        println!("Starting API Server on http://127.0.0.1:3000");
+        tracing::info!("Starting API server on http://127.0.0.1:3000");
 
         if let Err(e) = start_server(api_store, api_broadcast, "127.0.0.1", 3000).await {
-            eprintln!("API Server error: {}", e);
+            tracing::error!(error = %e, "API server error");
         }
     });
 
@@ -43,20 +51,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn receiver task
     let receiver_task = tokio::spawn(async move {
         if let Err(e) = run_receiver(receiver_store, receiver_broadcast, config).await {
-            eprintln!("Receiver error: {}", e);
+            tracing::error!(error = %e, "Receiver error");
         }
     });
 
-    println!("Both tasks running! Waiting for hardware connection...");
-    println!("\nTest the APIs:");
-    println!("   REST: Invoke-RestMethod http://localhost:3000/api/stats");
-    println!("   WS:   websocat ws://localhost:3000/ws/telemetry");
-    println!("\n═══════════════════════════════════════════════════════════\n");
+    tracing::info!("Both tasks running! Waiting for hardware connection...");
+    tracing::info!("Test the APIs:");
+    tracing::info!("  REST: curl http://localhost:3000/api/stats");
+    tracing::info!("  WS:   websocat ws://localhost:3000/ws/telemetry");
+    tracing::info!("═══════════════════════════════════════════════════════════");
 
     // Wait for either task to complete (or Ctrl+C)
     tokio::select! {
-        _ = receiver_task => println!("Receiver task completed"),
-        _ = api_task => println!("API server task completed"),
+        _ = receiver_task => tracing::info!("Receiver task completed"),
+        _ = api_task => tracing::info!("API server task completed"),
     }
 
     Ok(())
@@ -71,22 +79,22 @@ async fn run_receiver(
     let mut packet_count = 0;
 
     loop {
-        println!("Connecting to ESP32 at {}...", config.esp32_address());
+        tracing::info!(address = %config.esp32_address(), "Connecting to ESP32...");
         match TcpStream::connect(config.esp32_address()).await {
             Ok(stream) => {
-                println!("Connected to ESP32\n");
+                tracing::info!("Connected to ESP32");
                 let reader = BufReader::new(stream);
                 let mut lines = reader.lines();
 
                 // Inner loop: Read packets until disconnect/error
                 while let Some(line) = lines.next_line().await.unwrap_or_else(|e| {
-                    eprintln!("Error reading line: {}", e);
+                    tracing::error!(error = %e, "Error reading line");
                     None
                 }) {
                     let packet: TelemetryPacket = match serde_json::from_str(&line) {
                         Ok(p) => p,
                         Err(e) => {
-                            eprintln!("JSON parse error: {}", e);
+                            tracing::error!(error = %e, line = %line, "JSON parse error");
                             continue;
                         }
                     };
@@ -95,14 +103,15 @@ async fn run_receiver(
                     let value = match serde_json::to_string(&packet) {
                         Ok(v) => v,
                         Err(e) => {
-                            eprintln!("Serialization error: {}", e);
+                            tracing::error!(error = %e, "Serialization error");
                             continue;
                         }
                     };
 
                     // Lock is acquired here and released at end of block
                     {
-                        let mut store = store.lock().unwrap();
+                        let mut store = store.lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
                         store.put(Key::String(key.clone()), Value::String(value));
                     } // Lock is released here - API can now access the store
 
@@ -120,37 +129,42 @@ async fn run_receiver(
                         let flight_val = match serde_json::to_string(&metadata) {
                             Ok(v) => v,
                             Err(e) => {
-                                eprintln!("Metadata Serialization error: {}", e);
+                                tracing::error!(error = %e, "Metadata serialization error");
                                 continue;
                             }
                         };
 
-                        let mut store = store.lock().unwrap();
+                        let mut store = store.lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
                         store.put(Key::String(flight_key), Value::String(flight_val));
 
-                        println!("\nFlight detected! ID: {}", metadata.flight_id);
+                        tracing::info!(
+                            flight_id = %metadata.flight_id,
+                            max_altitude = metadata.max_altitude,
+                            "Flight detected and stored"
+                        );
                     }
 
                     // Status update every 10 packets
                     if packet_count % 10 == 0 {
-                        println!(
-                            "\n[{}] Stored {} packets | seq={}, alt={:.1}m, phase={}",
-                            packet.timestamp,
-                            packet_count,
-                            packet.seq,
-                            packet.baro.alt,
-                            packet.phase
+                        tracing::debug!(
+                            timestamp = packet.timestamp,
+                            packet_count = packet_count,
+                            seq = packet.seq,
+                            altitude = packet.baro.alt,
+                            phase = %packet.phase,
+                            "Telemetry packet stored"
                         );
                     }
                 }
-                println!("\nDisconnected from ESP32.");
+                tracing::warn!("Disconnected from ESP32");
             }
             Err(e) => {
-                eprintln!("Connection failed: {}", e);
+                tracing::error!(error = %e, "Connection failed");
             }
         }
 
-        println!("Retrying in 5 seconds...");
+        tracing::info!("Retrying in 5 seconds...");
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     }
 }
