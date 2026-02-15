@@ -31,13 +31,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn API server task
     let api_task = tokio::spawn(async move {
         println!("Starting API Server on http://127.0.0.1:3000");
-        println!("   Available endpoints:");
-        println!("   - GET /api/telemetry?start=X&end=Y&limit=Z");
-        println!("   - GET /api/telemetry/:timestamp");
-        println!("   - GET /api/flights");
-        println!("   - GET /api/flights/:id");
-        println!("   - GET /api/stats");
-        println!("   - WS  /ws/telemetry (Live stream)\n");
 
         if let Err(e) = start_server(api_store, api_broadcast, "127.0.0.1", 3000).await {
             eprintln!("API Server error: {}", e);
