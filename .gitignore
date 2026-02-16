@@ -1,1 +1,18 @@
 /target
+/lab8.pdf
+/examples/pageviews-20251102-110000
+/wikipedia_stresstest/pageviews-20251102-110000
+test_api.sh
+test_api.ps1
+REST_API_GUIDE.md
+Cargo.lock
+*.keys
+*.data
+*.meta
+telemetry_data.*
+
+# IDE
+.idea/
+
+# macOS
+.DS_Store
