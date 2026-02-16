@@ -358,8 +358,10 @@ This is a learning project. Use it however you want.
   - REST/WebSocket API architecture
 
 ### Frontend (Dashboard)
-
-
+-**Vedant Vedant** (1122953)-Front end Developer
+- **Primary Flight Display (PFD):** Developed the canvas-based flight instrument visualization.
+- **3D Map Integration:** Integrated CesiumJS for real-time UAV tracking and geospatial visualization.
+- **Telemetry Integration:** Implemented WebSocket client hooks for low-latency data streaming and state management.
 ---
 
 ## Acknowledgments
