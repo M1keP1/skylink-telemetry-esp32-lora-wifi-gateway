@@ -63,19 +63,3 @@ A real-time dashboard for monitoring Unmanned Aerial Vehicle (UAV) telemetry dat
 - `npm run lint`: Runs ESLint to check for code quality issues.
 - `npm run preview`: Previews the production build locally.
 
-## Team & Responsibilities
-
-### Backend System (SkyLink Gateway) - Mihir Kumar Patel (1123669)
-
-- Core telemetry gateway implementation
-- KV store design and optimization
-- Flight detection state machine
-- REST/WebSocket API architecture
-
-### Frontend System (UAV Dashboard) - Vedant Sorout
-
-- **Dashboard Architecture:** Designed and implemented the real-time React application using Vite.
-- **Primary Flight Display (PFD):** Developed the canvas-based flight instrument visualization.
-- **3D Map Integration:** Integrated CesiumJS for real-time UAV tracking and geospatial visualization.
-- **Telemetry Integration:** Implemented WebSocket client hooks for low-latency data streaming and state management.
-
