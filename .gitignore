@@ -5,3 +5,14 @@
 test_api.sh
 test_api.ps1
 REST_API_GUIDE.md
+Cargo.lock
+*.keys
+*.data
+*.meta
+telemetry_data.*
+
+# IDE
+.idea/
+
+# macOS
+.DS_Store
