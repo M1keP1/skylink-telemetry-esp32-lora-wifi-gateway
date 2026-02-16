@@ -1,0 +1,167 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+.app {
+  height: 100%;
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  box-sizing: border-box;
+  background: #0b1220;
+  color: #e6eefc;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+.left {
+  width: 600px;
+  /* tweak later */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panel {
+  background: #111b2e;
+  border: 1px solid #1c2a44;
+  border-radius: 12px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.top {
+  height: 500px;
+  /* altimeter area */
+}
+
+.bottom {
+  flex: 1;
+  /* telemetry fills remaining */
+  min-height: 0;
+}
+
+.right {
+  flex: 1;
+  min-width: 0;
+  background: #0f172a;
+  border: 1px solid #1c2a44;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+
+.map-connect-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+  padding: 8px 16px;
+  background: rgba(11, 18, 32, 0.85);
+  color: #3cff3c;
+  border: 1px solid #3cff3c;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 600;
+  text-transform: uppercase;
+  backdrop-filter: blur(4px);
+  transition: all 0.2s;
+}
+
+.map-connect-btn:hover {
+  background: rgba(60, 255, 60, 0.15);
+  box-shadow: 0 0 10px rgba(60, 255, 60, 0.4);
+}
+
+.map-connect-btn.disconnected {
+  color: #ff3c3c;
+  border-color: #ff3c3c;
+}
+
+.map-connect-btn.disconnected:hover {
+  background: rgba(255, 60, 60, 0.15);
+  box-shadow: 0 0 10px rgba(255, 60, 60, 0.4);
+}
+
+.flight-status-overlay {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 1000;
+  background: rgba(11, 18, 32, 0.85);
+  backdrop-filter: blur(4px);
+  border: 1px solid #1c2a44;
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #1c2a44;
+  padding-bottom: 8px;
+}
+
+.status-row .label {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.status-row .value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #e6eefc;
+}
+
+.status-row .value.status-cruise {
+  color: #3cff3c;
+}
+
+.status-row .value.status-taking-off {
+  color: #ebff3c;
+}
+
+.status-row .value.status-landing {
+  color: #ebff3c;
+}
+
+.status-row .value.status-disconnected {
+  color: #ff3c3c;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-item .label {
+  font-size: 10px;
+  color: #64748b;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.stat-item .value {
+  font-size: 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #e6eefc;
+  font-weight: 500;
+}
